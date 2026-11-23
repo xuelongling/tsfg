@@ -18,11 +18,12 @@ struct SourceText {
 struct SourceScope {
   std::map<std::string,std::string> visible,names;
   std::map<std::string,unsigned> ordinals;
-  std::set<std::string> initialized,narrowed,written;
+  std::set<std::string> initialized,narrowed,never,written;
   std::vector<std::pair<const Json *,std::string>> prefix;
   Array path;
   std::string scope,role;
   bool normal=true;
+  void forgetTypeProof(const std::string &id){narrowed.erase(id);never.erase(id);}
 };
 class SourceProof {
   Program &p;
@@ -43,6 +44,7 @@ class SourceProof {
   bool function(const Json &,const Json &,const SourceScope &);
   bool region(const Array &,const Json &,SourceScope &,size_t &,bool braces=true);
   bool expression(const Json &,const Json &,SourceScope &,size_t &,bool write=false,bool trimmed=false);
+  bool assignment(const Json &,const Json &,const Json &,SourceScope &,size_t &,bool trimmed=false);
   bool declaration(const Json &,const Json &,SourceScope &);
   bool annotation(size_t &,const Json &,llvm::StringRef key="type");
   bool statement(const Json &,const Json &,SourceScope &,size_t &);

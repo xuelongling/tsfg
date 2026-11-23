@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: MIT
 #include "formal-exception-source.h"
 namespace tsfg::formalException {
+bool SourceProof::assignment(const Json &target,const Json &value,const Json &h,SourceScope &scope,size_t &at,bool trimmed){
+  if(!expression(target,field(h,"target"),scope,at,true,trimmed)||!source->expect(at,"=",p)
+    ||!expression(value,field(h,"value"),scope,at,false,trimmed))return false;
+  const auto *reference=&target;
+  while(field(*reference,"kind").getAsString()=="group"){
+    if(!p.step())return false;reference=&field(*reference,"operand");
+  }
+  const auto id=string(field(*reference,"symbol"));scope.forgetTypeProof(id);scope.written.insert(id);return true;
+}
 bool SourceProof::expression(const Json &raw,const Json &h,SourceScope &scope,size_t &at,bool write,bool trimmed){
   if(!p.step()||!p.require(raw.getAsObject()&&h.getAsObject()&&equal(field(raw,"range"),field(h,"range")),"original expression anchor"))return false;
   const auto kind=string(field(raw,"kind")),rawType=type(raw),hType=string(field(h,"type"));const auto first=at;
@@ -10,13 +19,14 @@ bool SourceProof::expression(const Json &raw,const Json &h,SourceScope &scope,si
     const auto nearest=original==symbols.end()?scope.names.end():scope.names.find(string(field(*original->second,"name")));
     if(!p.require(visible!=scope.visible.end()&&original!=symbols.end()&&nearest!=scope.names.end()&&nearest->second==id&&scope.initialized.count(id)
       &&string(field(h,"binding"))==visible->second&&string(field(h,"kind"))==(write?"bindingTarget":"bindingRead"),"reference scope, TDZ or original binding"))return false;
+    if(!p.require(write||!scope.never.count(id),"never occurrence has no private consumer tracer"))return false;
     const auto expected=scope.narrowed.count(id)&&!write?type(Object{{"type","bool"}}):type(*original->second);
     if(!p.require(hType==expected&&(!write||field(*original->second,"writable").getAsBoolean()==true)
       &&(write||equal(field(raw,"presenceFlow"),field(h,"presenceFlow"))),"same-binding narrowing, permission or presence"))return false;
     const auto semantic=p.types.find(hType);const bool aggregate=semantic!=p.types.end()&&string(field(*semantic->second,"kind"))=="aggregate";
     if(!source->name(at,string(field(*original->second,"name")),field(raw,"range"),p,trimmed||aggregate))return false;
     if(p.bindingOwner.at(visible->second)!=currentOwner){auto &access=actualCaptures[currentOwner][visible->second];if(write)access.second=true;else access.first=true;}
-    if(write){scope.narrowed.erase(id);scope.written.insert(id);}return true;
+    return true;
   }
   if(kind=="group"){
     if(!p.require(string(field(h,"kind"))==(write?"targetGroup":"group"),"group role")||!source->expect(at,"(",p)
@@ -32,8 +42,7 @@ bool SourceProof::expression(const Json &raw,const Json &h,SourceScope &scope,si
   }
   if(kind=="write"){
     if(!p.require(string(field(h,"kind"))=="bindingWrite"&&string(field(raw,"operator"))=="="&&string(field(h,"operator"))=="=","write result mapping")
-      ||!expression(field(raw,"left"),field(h,"target"),scope,at,true,true)||!source->expect(at,"=",p)
-      ||!expression(field(raw,"right"),field(h,"value"),scope,at,false,true))return false;
+      ||!assignment(field(raw,"left"),field(raw,"right"),h,scope,at,true))return false;
     return source->span(field(raw,"range"),first,at-1,p,false);
   }
   if(kind=="type-test"){

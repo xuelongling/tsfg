@@ -63,6 +63,123 @@ function groupedCondition(directory,index,count){
   });
 }
 
+function whileFromCatchGuard(directory,grouped=false){
+  return derivedException(directory,(payload,file)=>{
+    const guard=payload.facts.functions[0].body[0].exception.catchClause.block.body[0];
+    const {start}=guard.range,rawStart=file.content.slice(0,start).trimEnd().length;
+    assert.equal(file.content.slice(start,start+2),'if');
+    file.content=file.content.slice(0,start)+'while'+file.content.slice(start+2);
+    shiftSourceSpans(payload,file.path,start+2,3);
+    const condition=guard.condition,body=guard.thenBody;
+    guard.kind='while';guard.range.start=rawStart;guard.body=body;delete guard.thenBody;
+    if(grouped){
+      const {start,end}=condition.range;
+      file.content=file.content.slice(0,start)+'('+file.content.slice(start,end)+')'+file.content.slice(end);
+      shiftSourceSpans(payload,file.path,end,2);
+      guard.condition={kind:'group',type:'bool',range:{start,end:end+2},operand:condition};
+      for(const range of [condition.range,condition.operand.range,condition.typeTest.typeofRange,condition.typeTest.tagRange]){
+        range.start++;range.end++;
+      }
+      const [block]=body,{start:writeStart,end:writeEnd}=block.body[0].range;
+      const replacement=' caught = true;';
+      assert.equal(file.content.slice(writeStart,writeEnd),' throw value;');
+      file.content=file.content.slice(0,writeStart)+replacement+file.content.slice(writeEnd);
+      shiftSourceSpans(payload,file.path,writeEnd,replacement.length-(writeEnd-writeStart));
+      block.body[0]={kind:'assignment',range:{start:writeStart,end:writeStart+replacement.length},
+        target:{...condition.operand,range:{start:writeStart,end:writeStart+7}},
+        value:{kind:'boolean',type:'bool',boolean:true,range:{start:writeStart+9,end:writeStart+14}}};
+    }
+  });
+}
+
+test('exception typeof while narrows only the boolean body edge',async()=>{
+  const imported=await whileFromCatchGuard('m21-exception/corpus/01');
+  assert.equal(imported.status,'ok',JSON.stringify(imported));
+  const built=buildHir(imported.snapshot);
+  assert.equal(built.status,'ok',JSON.stringify(built));
+  const [loop,after]=built.hir.functions[0].body.body[0].catchClause.region.body;
+  assert.equal(loop.kind,'while');
+  assert.equal(loop.condition.operand.type,after.value.type);
+  assert.equal(loop.bodyRegion.body[0].value.right.type,hash('tsfg.type\0bool'));
+  assert.match(lowerFormalHir(built.hir),/"tsfg_eh\.type_test"[\s\S]*cf\.cond_br/u);
+});
+
+test('grouped exception typeof while narrows the boolean exit edge',async()=>{
+  const imported=await whileFromCatchGuard('m21-exception/phase-a-controls/05',true);
+  assert.equal(imported.status,'ok',JSON.stringify(imported));
+  const built=buildHir(imported.snapshot);
+  assert.equal(built.status,'ok',JSON.stringify(built));
+  const [loop,,after]=built.hir.functions[0].body.body[0].catchClause.region.body;
+  assert.equal(loop.condition.operand.operator,'!==');
+  assert.equal(loop.bodyRegion.body[0].kind,'assign');
+  assert.equal(after.value.type,hash('tsfg.type\0bool'));
+  assert.match(lowerFormalHir(built.hir),/"tsfg_eh\.type_test"[\s\S]*cf\.cond_br/u);
+});
+
+test('exception typeof while rejects either claimed type in a contradictory body',async()=>{
+  const derive=claimed=>derivedException('m21-exception/corpus/01',(payload,file)=>{
+    const guard=payload.facts.functions[0].body[0].exception.catchClause.block.body[0];
+    const body=guard.thenBody[0].body,{start}=body[0].range,condition=structuredClone(guard.condition);
+    const prefix=' while (typeof caught !== "boolean") {',read=' throw caught;';
+    const source=prefix+(claimed?read:'')+' }';
+    file.content=file.content.slice(0,start)+source+file.content.slice(start);
+    shiftSourceSpans(payload,file.path,start,source.length);
+    const offset=start+prefix.indexOf('typeof')-condition.range.start;
+    for(const range of [condition.range,condition.operand.range,condition.typeTest.typeofRange,condition.typeTest.tagRange]){
+      range.start+=offset;range.end+=offset;
+    }
+    condition.operator='!==';condition.operand.type='bool';
+    const at=relative=>start+relative;
+    const block={kind:'block',range:{start:at(prefix.indexOf(' {')),end:at(source.length)}};
+    if(claimed){
+      const operandStart=at(prefix.length+read.indexOf(' caught'));
+      block.body=[{kind:'throw',range:{start:at(prefix.length),end:at(prefix.length+read.length)},
+        expression:{...condition.operand,type:claimed,range:{start:operandStart,end:operandStart+7}}}];
+    }
+    body.unshift({kind:'while',condition,range:{start,end:at(source.length)},body:[block]});
+  });
+  const empty=await derive(null);
+  assert.equal(empty.status,'ok',JSON.stringify(empty));
+  for(const type of ['unknown','bool']){
+    const rejected=await derive(type);
+    assert.equal(rejected.status,'error');
+    assert.match(rejected.diagnostics[0].message,/never occurrence has no private consumer tracer/u);
+  }
+});
+
+test('exception closure in a narrowed while reads the captured declaration type',async()=>{
+  const imported=await derivedException('m21-exception/corpus/08',(payload,file)=>{
+    const [entry,inner]=payload.facts.functions,catchClause=entry.body[0].exception.catchClause;
+    const body=catchClause.block.body,start=body[0].range.start,end=body[1].range.end;
+    const prefix=' while (typeof caught === "boolean") {',suffix=' } throw caught;';
+    const beforeSuffix=end+prefix.length,loopEnd=beforeSuffix+2;
+    file.content=file.content.slice(0,start)+prefix+file.content.slice(start,end)+suffix+file.content.slice(end);
+    shiftSourceSpans(payload,file.path,start,prefix.length);
+    shiftSourceSpans(payload,file.path,beforeSuffix,suffix.length);
+    const captured=inner.body[0].exception.tryBlock.body[0].expression;
+    const typeofStart=start+prefix.indexOf('typeof'),operandStart=start+prefix.indexOf(' caught');
+    const operandEnd=operandStart+' caught'.length,tagStart=start+prefix.indexOf(' "boolean"');
+    const tagEnd=tagStart+' "boolean"'.length,throwOperand=beforeSuffix+suffix.indexOf(' caught');
+    const condition={kind:'type-test',type:'bool',operator:'===',range:{start:typeofStart,end:tagEnd},
+      operand:{...captured,range:{start:operandStart,end:operandEnd}},
+      typeTest:{tag:'boolean',typeofRange:{start:typeofStart,end:operandEnd},tagRange:{start:tagStart,end:tagEnd}}};
+    catchClause.block.body=[{kind:'while',condition,range:{start,end:loopEnd},
+      body:[{kind:'block',range:{start:start+prefix.indexOf(' {'),end:loopEnd},body}]},
+    {kind:'throw',range:{start:loopEnd,end:beforeSuffix+suffix.length},
+      expression:{...captured,range:{start:throwOperand,end:throwOperand+' caught'.length}}}];
+  });
+  assert.equal(imported.status,'ok',JSON.stringify(imported));
+  const built=buildHir(imported.snapshot);
+  assert.equal(built.status,'ok',JSON.stringify(built));
+  const [entry,inner]=built.hir.functions,loop=entry.body.body[0].catchClause.region.body[0];
+  const captured=inner.body.body[0].tryRegion.body[0].value;
+  assert.equal(loop.bodyRegion.body[0].target,inner.id);
+  assert.equal(captured.binding,loop.condition.operand.binding);
+  assert.equal(captured.type,loop.condition.operand.type);
+  assert.ok(inner.captures.some(row=>row.binding===captured.binding&&row.read));
+  assert.match(lowerFormalHir(built.hir),/"tsfg_eh\.type_test"[\s\S]*cf\.cond_br/u);
+});
+
 test('grouped true exception while keeps the non-void false edge unreachable',async()=>{
   const imported=await groupedCondition('m21-exception/controls/literal-true-while',0,2);
   assert.equal(imported.status,'ok',JSON.stringify(imported));
