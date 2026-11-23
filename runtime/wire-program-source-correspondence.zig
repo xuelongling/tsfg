@@ -220,7 +220,7 @@ const Match = struct {
         }
         try c.require(matched);
     }
-    fn operation(self: *Match, block: usize, position: usize, actual: *const ins.Instruction, expected: *const control.SourcePlanOperation) Error!void {
+    fn operation(self: *Match, block: usize, position: usize, actual: *const ins.Instruction, expected: *const control.SourcePlanOperation, folded: bool) Error!void {
         const c = self.c; const common = self.common; const code = std.meta.activeTag(actual.data);
         const p = Properties{ .c = c, .common = common, .members = expected.properties };
         var view: Identity = if (actual.result) |r| staticView(self.f, common, r) else .{ .text = "void" };
@@ -294,7 +294,7 @@ const Match = struct {
             },
             .eh_equal => |v| { try self.name(expected, "strict_equal"); try p.count(1); try p.text("operator", if (v.operator == .equal) "===" else "!=="); },
             .@"return", .br, .cond_br => {
-                try self.name(expected, if (code == .@"return") "func.return" else if (code == .br) "cf.br" else "cf.cond_br");
+                try self.name(expected, if (code == .@"return") "func.return" else if (code == .br and !folded) "cf.br" else "cf.cond_br");
                 try p.count(0); view = .{ .text = "" };
             },
             .fuel => |v| { try self.name(expected, "fuel"); try p.count(1); try p.integer("event", @intFromEnum(v.event)); },
@@ -445,6 +445,48 @@ const Match = struct {
         }
         try self.matchView(expected, view);
     }
+    fn foldedSuccessor(self: *Match, expected: *const control.SourcePlanOperation, previous: *const control.SourcePlanOperation, literal: *const ins.Instruction) Error!usize {
+        const c = self.c;
+        try c.require(expected.result == null and expected.operands.len == 1 and expected.successors.len == 2);
+        try c.require(try equal(c, previous.name, "boolean"));
+        const condition = expected.operands[0];
+        try c.require(previous.result == condition and previous.operands.len == 0 and previous.successors.len == 0 and
+            literal.data == .const_bool and std.meta.eql(previous.source, expected.source));
+        try c.require(self.resolve(literal.result orelse return error.InvalidShape) == @intFromEnum(condition));
+        const yes = expected.successors[0];
+        const no = expected.successors[1];
+        try c.require(yes != no and self.plan.blocks[@intFromEnum(yes)].parameters.len == 0 and
+            self.plan.blocks[@intFromEnum(no)].parameters.len == 0);
+        // The original upper-effect walk and retained physical graph must
+        // agree. Dropping the edge to this scalar return cannot lose a dependency.
+        const discarded = self.plan.blocks[@intFromEnum(if (literal.data.const_bool) no else yes)].operations;
+        try c.require(discarded.len != 0 and discarded.len <= 3);
+        const returned = discarded[discarded.len - 1];
+        try c.require(try equal(c, returned.name, "func.return"));
+        try c.require(returned.result == null and returned.successors.len == 0);
+        if (discarded.len == 1) {
+            try c.require(returned.operands.len == 0);
+        } else {
+            const scalar = discarded[0];
+            try c.require((try equal(c, scalar.name, "constant")) or (try equal(c, scalar.name, "floating")) or
+                (try equal(c, scalar.name, "boolean")));
+            var result = scalar.result orelse return error.InvalidShape;
+            try c.require(scalar.operands.len == 0 and scalar.successors.len == 0);
+            if (discarded.len == 3) {
+                const copy = discarded[1];
+                try c.require(try equal(c, copy.name, "value_copy"));
+                try c.require(copy.operands.len == 1 and copy.operands[0] == result and copy.successors.len == 0);
+                try c.require(try equal(c, copy.view, scalar.view));
+                const p = Properties{ .c = c, .common = self.common, .members = copy.properties };
+                try p.count(1);
+                try p.text("type", scalar.view);
+                result = copy.result orelse return error.InvalidShape;
+            }
+            try c.require(returned.operands.len == 1 and returned.operands[0] == result);
+        }
+        return if (literal.data.const_bool) 0 else 1;
+    }
+
     fn run(self: *Match) Error!void {
         const c = self.c; const f = self.f; const plan = self.plan;
         try c.charge(3 * f.blocks.len);
@@ -485,7 +527,7 @@ const Match = struct {
             try c.step(); if (logical.operations.len == 0) continue;
             var block = self.blocks[semantic]; var position: usize = 0;
             try c.require(!seen[block]); seen[block] = true;
-            for (logical.operations) |*expected| {
+            for (logical.operations, 0..) |*expected, logical_position| {
                 const source_numeric = try self.sourceNumeric(expected); var checked: usize = 0;
                 while (true) {
                     try c.step(); try c.require(position < f.blocks[block].instructions.len);
@@ -516,13 +558,22 @@ const Match = struct {
                 }
                 const actual = &f.blocks[block].instructions[position];
                 try c.require(checked == (if (source_numeric) expected.operands.len else 0));
-                try c.require(std.meta.eql(actual.source, expected.source) and (actual.result == null) == (expected.result == null) and actual.operands.len == expected.operands.len);
-                for (actual.operands, expected.operands) |raw, value| { try c.step(); try c.require(self.resolve(raw) == @intFromEnum(value)); }
-                const actual_edges = edges(actual); try c.require(actual_edges.count == expected.successors.len);
-                for (actual_edges.values[0..actual_edges.count], expected.successors) |raw, value| {
+                var operands = expected.operands;
+                var successors = expected.successors;
+                const folded = actual.data == .br and try equal(c, expected.name, "cf.cond_br");
+                if (folded) {
+                    try c.require(logical_position != 0 and position != 0);
+                    const selected = try self.foldedSuccessor(expected, &logical.operations[logical_position - 1], &f.blocks[block].instructions[position - 1]);
+                    operands = &.{};
+                    successors = successors[selected .. selected + 1];
+                }
+                try c.require(std.meta.eql(actual.source, expected.source) and (actual.result == null) == (expected.result == null) and actual.operands.len == operands.len);
+                for (actual.operands, operands) |raw, value| { try c.step(); try c.require(self.resolve(raw) == @intFromEnum(value)); }
+                const actual_edges = edges(actual); try c.require(actual_edges.count == successors.len);
+                for (actual_edges.values[0..actual_edges.count], successors) |raw, value| {
                     try c.step(); try c.require(self.blocks[@intFromEnum(value)] != none and self.blocks[@intFromEnum(value)] == @intFromEnum(raw));
                 }
-                try self.operation(block, position, actual, expected);
+                try self.operation(block, position, actual, expected, folded);
                 if (expected.result) |value| try self.bind(actual.result.?, value);
                 position += 1;
             }

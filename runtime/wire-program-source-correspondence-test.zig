@@ -17,6 +17,7 @@ const ins = model.instruction;
 
 const i32_type: t.TypeRef = @enumFromInt(0);
 const array_type: t.TypeRef = @enumFromInt(1);
+const bool_type: t.TypeRef = @enumFromInt(2);
 const r0: t.RegisterRef = @enumFromInt(0);
 const r1: t.RegisterRef = @enumFromInt(1);
 const r2: t.RegisterRef = @enumFromInt(2);
@@ -25,6 +26,7 @@ const i32_carrier: t.Carrier = .{ .@"type" = i32_type };
 const array_carrier: t.Carrier = .{ .@"type" = array_type };
 const i32_text = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const array_text = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+const bool_text = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
 const declaration: t.Origin = .{ .source = @enumFromInt(0), .start = 0, .end = 20 };
 const first: t.Origin = .{ .source = @enumFromInt(0), .start = 2, .end = 3 };
 const second: t.Origin = .{ .source = @enumFromInt(0), .start = 4, .end = 5 };
@@ -35,8 +37,11 @@ const seven_properties = [_]t.JsonMember{.{ .key = "decimal", .value = .{ .strin
 const nine_properties = [_]t.JsonMember{.{ .key = "decimal", .value = .{ .string = "9" } }};
 const zero_properties = [_]t.JsonMember{.{ .key = "decimal", .value = .{ .string = "0" } }};
 const copy_properties = [_]t.JsonMember{.{ .key = "type", .value = .{ .string = array_text } }};
+const scalar_copy_properties = [_]t.JsonMember{.{ .key = "type", .value = .{ .string = i32_text } }};
 const read_properties = [_]t.JsonMember{.{ .key = "element", .value = .{ .string = i32_text } }};
 const neg_properties = [_]t.JsonMember{.{ .key = "operator", .value = .{ .string = "-" } }};
+const true_properties = [_]t.JsonMember{.{ .key = "value", .value = .{ .boolean = true } }};
+const false_properties = [_]t.JsonMember{.{ .key = "value", .value = .{ .boolean = false } }};
 
 // One reusable typed fixture owns every mutable row. init receives its final
 // address before connecting slices, avoiding pointers into a returned local.
@@ -46,15 +51,15 @@ const neg_properties = [_]t.JsonMember{.{ .key = "operator", .value = .{ .string
 const Fixture = struct {
     program: model.Program,
     sources: [2]tables.Source,
-    types: [2]tables.CommonType,
+    types: [3]tables.CommonType,
     bindings: [1]storage.CommonBinding,
     abis: [1]storage.CommonAbi,
     functions: [1]model.Function,
     registers: [4]model.Register,
-    blocks: [2]model.Block,
-    instructions: [5]ins.Instruction,
-    plan_blocks: [1]control.SourcePlanBlock,
-    operations: [5]control.SourcePlanOperation,
+    blocks: [3]model.Block,
+    instructions: [8]ins.Instruction,
+    plan_blocks: [3]control.SourcePlanBlock,
+    operations: [8]control.SourcePlanOperation,
     carriers: [4][]const u8,
 
     const Kind = enum { alpha, array_length, array_read, numeric };
@@ -70,6 +75,9 @@ const Fixture = struct {
                 .nominal_key = null, .runtime_key = null },
             .{ .id = @splat(0x22), .kind = .array, .name = "i32[]", .native_code = 0,
                 .base = null, .element = i32_type, .members = &.{}, .methods = null,
+                .nominal_key = null, .runtime_key = null },
+            .{ .id = @splat(0x33), .kind = .scalar, .name = "bool", .native_code = 2,
+                .base = null, .element = null, .members = &.{}, .methods = null,
                 .nominal_key = null, .runtime_key = null },
         };
         self.bindings[0] = .{ .id = "fixture-array-param", .owner = .{ .param = @enumFromInt(0) },
@@ -154,7 +162,7 @@ const Fixture = struct {
             .argument_types = argument_types, .receiver = null, .construction = null, .receiver_frame = null,
             .lexical_environment = null, .physical_parameters = physical_parameters,
             .result = i32_type, .result_carrier = i32_carrier,
-            .source_plan = .{ .carriers = self.carriers[0..carrier_count], .blocks = &self.plan_blocks } };
+            .source_plan = .{ .carriers = self.carriers[0..carrier_count], .blocks = self.plan_blocks[0..1] } };
         self.functions[0] = .{ .id = @splat(0x51), .signature = @splat(0x41), .abi = @enumFromInt(0),
             .source = @enumFromInt(0), .role = .ordinary, .declaration = .{ .start = declaration.start, .end = declaration.end },
             .name = "passiveFixture", .registers = self.registers[0..register_count], .blocks = self.blocks[0..block_count] };
@@ -166,7 +174,101 @@ const Fixture = struct {
             .root_source = @enumFromInt(0), .tables = .{ .sources = &self.sources, .mode = .{ .common = common } },
             .functions = &self.functions };
     }
+
+    fn literalBranch(self: *Fixture, condition: bool, folded: bool, copy_discarded: bool) void {
+        self.init(.alpha);
+        const yes: t.BlockRef = @enumFromInt(1);
+        const no: t.BlockRef = @enumFromInt(2);
+        self.registers[0] = .{ .carrier = .{ .@"type" = bool_type }, .view = bool_type };
+        self.carriers[0] = bool_text;
+        self.instructions[1] = .{ .source = first, .result = r0, .operands = &.{}, .data = .{ .const_bool = condition } };
+        self.instructions[2] = .{ .source = first, .result = null, .operands = if (folded) &.{} else &.{r0},
+            .data = if (folded) .{ .br = .{ .destination = if (condition) yes else no } }
+                else .{ .cond_br = .{ .true_destination = yes, .false_destination = no, .true_count = 0 } } };
+        self.operations[1] = .{ .name = "boolean", .view = bool_text, .properties = if (condition) &true_properties else &false_properties,
+            .result = r0, .operands = &.{}, .successors = &.{}, .source = first };
+        self.operations[2] = .{ .name = "cf.cond_br", .view = "", .properties = &.{},
+            .result = null, .operands = &.{r0}, .successors = &.{ yes, no }, .source = first };
+        self.blocks[0] = .{ .parameters = &.{}, .instructions = self.instructions[0..3] };
+        self.plan_blocks[0] = .{ .parameters = &.{}, .operations = self.operations[0..3] };
+        var at: usize = 3;
+        const Leaf = struct { value: u64, result: t.RegisterRef, properties: []const t.JsonMember };
+        for ([_]Leaf{
+            .{ .value = 7, .result = r1, .properties = &seven_properties },
+            .{ .value = 9, .result = r2, .properties = &nine_properties },
+        }, 1..) |leaf, block| {
+            const start = at;
+            self.instructions[at] = .{ .source = third, .result = leaf.result, .operands = &.{}, .data = .{ .const_i32 = leaf.value } };
+            self.operations[at] = .{ .name = "constant", .view = i32_text, .properties = leaf.properties,
+                .result = leaf.result, .operands = &.{}, .successors = &.{}, .source = third };
+            at += 1;
+            var returned: []const t.RegisterRef = if (leaf.result == r1) &.{r1} else &.{r2};
+            if (copy_discarded and block != @intFromEnum(if (condition) yes else no)) {
+                self.instructions[at] = .{ .source = last, .result = r3, .operands = returned, .data = .{ .domain_copy = .{ .static_view = i32_type } } };
+                self.operations[at] = .{ .name = "value_copy", .view = i32_text, .properties = &scalar_copy_properties,
+                    .result = r3, .operands = returned, .successors = &.{}, .source = last };
+                returned = &.{r3};
+                at += 1;
+            }
+            self.instructions[at] = .{ .source = last, .result = null, .operands = returned, .data = .@"return" };
+            self.operations[at] = .{ .name = "func.return", .view = "", .properties = &.{},
+                .result = null, .operands = returned, .successors = &.{}, .source = last };
+            at += 1;
+            self.blocks[block] = .{ .parameters = &.{}, .instructions = self.instructions[start..at] };
+            self.plan_blocks[block] = .{ .parameters = &.{}, .operations = self.operations[start..at] };
+        }
+        const registers = if (copy_discarded) @as(usize, 4) else 3;
+        self.functions[0].registers = self.registers[0..registers];
+        self.functions[0].blocks = &self.blocks;
+        self.abis[0].source_plan = .{ .carriers = self.carriers[0..registers], .blocks = &self.plan_blocks };
+    }
 };
+
+test "passive literal branch accepts only the selected edge and still matches both blocks" {
+    var fixture: Fixture = undefined;
+    for ([_]bool{ true, false }) |condition| {
+        for ([_]bool{ true, false }) |folded| {
+            for ([_]bool{ true, false }) |copy_discarded| {
+                fixture.literalBranch(condition, folded, copy_discarded);
+                var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
+                try ssa.check(&c);
+                try correspondence.check(&c);
+            }
+        }
+    }
+}
+
+test "passive literal branch rejects a wrong edge, new anchor, or altered discarded block" {
+    var fixture: Fixture = undefined;
+    const Mutation = enum { edge, anchor, discarded, nonlocal_return, literal_span, literal_file, copy_operand };
+    for (std.enums.values(Mutation)) |mutation| {
+        fixture.literalBranch(true, true, mutation == .copy_operand);
+        switch (mutation) {
+            .edge => fixture.instructions[2].data.br.destination = @enumFromInt(2),
+            .anchor => fixture.instructions[2].source = third,
+            .discarded => fixture.instructions[5].data.const_i32 = 8,
+            .nonlocal_return => {
+                fixture.instructions[6].operands = &.{r1};
+                fixture.operations[6].operands = &.{r1};
+            },
+            .literal_span => {
+                fixture.instructions[1].source = second;
+                fixture.operations[1].source = second;
+            },
+            .literal_file => {
+                fixture.instructions[1].source.source = @enumFromInt(1);
+                fixture.operations[1].source.source = @enumFromInt(1);
+            },
+            .copy_operand => {
+                fixture.instructions[6].operands = &.{r1};
+                fixture.operations[6].operands = &.{r1};
+            },
+        }
+        var c = context.Context{ .program = &fixture.program, .allocator = std.testing.allocator };
+        try ssa.check(&c);
+        try std.testing.expectError(error.InvalidShape, correspondence.check(&c));
+    }
+}
 
 test "passive correspondence accepts alpha-renamed data with one shared meter" {
     var fixture: Fixture = undefined; fixture.init(.alpha);
