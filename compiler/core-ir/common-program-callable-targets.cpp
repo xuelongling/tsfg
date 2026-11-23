@@ -289,6 +289,15 @@ struct TargetFlow {
       }
       if(saved.top){unknownCall(value,args,saved);if(result)result->top=true;}return result;
     }
+    if(kind=="binary"){
+      const auto op=field(value,"operator").getAsString();
+      const auto result=types.find(type);
+      if((op=="&&"||op=="||")&&result!=types.end()&&field(*result->second,"kind").getAsString()=="scalar"&&
+          field(*result->second,"name").getAsString()=="bool"){
+        expression(s,state,field(value,"left"));const auto skipped=snapshot(state);
+        expression(s,state,field(value,"right"));combine(state,skipped);return {};
+      }
+    }
     for(auto key:{"expression","left","right","receiver","index","value","target"})if(!field(value,key).getAsNull())expression(s,state,field(value,key));
     for(const auto &child:items(field(value,"elements"))){expression(s,state,child);auto owner=types.find(type);if(owner!=types.end())erase(string(field(*owner->second,"elementType")),string(field(child,"type")));}
     const auto &rawArgs=items(field(value,"arguments"));if(!step(rawArgs.size()))return {};std::vector<std::optional<Targets>> args;args.reserve(rawArgs.size());

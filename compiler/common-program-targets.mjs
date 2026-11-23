@@ -6,6 +6,7 @@ import {commonMethods} from './common-program-methods.mjs';
 import {signatureId} from './module-callable-common.mjs';
 import {commonCheck as check,commonFailure,commonSame as same,commonRecord as record} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
+import {boolTypeId} from './identity.mjs';
 export function commonCallableType(id,types,spend) {
   const type=types.get(id);if(type?.kind==='function')return type;
   if(type?.kind!=='union'||type.members.length<2||type.members.length>3)return null;
@@ -189,6 +190,14 @@ export function commonTargets(hir,spend,records=null) {
         else {for(const [index,p]of callee.fn.parameters.entries()){spend();if(callable(p.type)){check(args[index],'callable');merge(callee.parameters,index,args[index]);}}if(result)result=domain.join(result,callee.returns);}
       }
       if(saved.top){unknownCall(value,args,saved);if(result)result=domain.top();}return result;
+    }
+    if(value.kind==='binary'&&value.type===boolTypeId&&(value.operator==='&&'||value.operator==='||')){
+      expression(summary,state,value.left);
+      // Match the two normalized CFG edges after the left operand completes.
+      const skipped=clone(state);
+      expression(summary,state,value.right);
+      join(state,skipped);
+      return null;
     }
     for(const key of ['expression','left','right','receiver','index','value','target'])if(value[key])expression(summary,state,value[key]);
     for(const child of value.elements??[]){expression(summary,state,child);erase(types.get(value.type)?.elementType,child.type);}
