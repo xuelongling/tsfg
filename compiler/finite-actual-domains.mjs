@@ -10,7 +10,7 @@ import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256,i32TypeId} from './identity.mjs';
 import {finiteNumericUse,finiteNormalFlow,finiteNormalBody,finiteNormalLogical,finiteNormalCoalesce} from './finite-numeric-use.mjs';
 import {isFiniteAbsence} from './finite-presence.mjs';
-import {actualFieldResolver} from './member-presence.mjs';
+import {actualFieldResolver,fieldReceiverView} from './member-presence.mjs';
 import {selectReferenceMethod} from './reference-methods.mjs';
 
 function fail(message) {throw Object.assign(new TypeError('r03-finite-domain: '+message),
@@ -504,13 +504,13 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       requirements.push(baseReturned,...constructionNormal.get(fn.id));insert(id,'actual',v.type);
     }else if(v.kind==='propertyPresenceTest') {
       child('left');const receiver=child('right');insert(id,'actual',v.type);
-      presenceTests.push({id,receiver,field:v.property,viewType:fieldOwners.get(v.property).owner,targets:new Map()});
+      presenceTests.push({id,receiver,field:v.property,viewType:fieldReceiverView(types,fieldOwners,v.right.type,v.property),targets:new Map()});
     }else if(v.kind==='fieldAccess')fieldReads.push({id,receiver:child('receiver'),field:v.property,result:id,
-      viewType:['reference','value'].includes(types.get(v.receiver.type).kind)?v.receiver.type:fieldOwners.get(v.property).owner,targets:new Map()});
+      viewType:fieldReceiverView(types,fieldOwners,v.receiver.type,v.property),targets:new Map()});
     else if(v.kind==='fieldAssignment') {
       const receiver=at(v.target.receiver,p+'/target/receiver'),value=child('value');
       fieldStores.push({id,receiver,field:v.target.property,value,
-        viewType:['reference','value'].includes(types.get(v.target.receiver.type).kind)?v.target.receiver.type:fieldOwners.get(v.target.property).owner,targets:new Map()});copy(value,id);
+        viewType:fieldReceiverView(types,fieldOwners,v.target.receiver.type,v.target.property),targets:new Map()});copy(value,id);
     }else if(['binary','shortCircuit'].includes(v.kind)&&v.operator==='??') {
       const selected=finiteNormalCoalesce(flow,continuation,(key,gate,pending)=>operand(v[key],p+'/'+key,gate,pending),absent);
       presenceCarriers.push(selected.left);dependencies.push(...selected.dependencies);

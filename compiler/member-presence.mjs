@@ -5,6 +5,9 @@
 import {canonical,sha256} from './identity.mjs';
 import {typedArrayRepresentation} from './typed-array-representation.mjs';
 export const undefinedMemberType=sha256('tsfg.type\0undefined');
+export function fieldReceiverView(types,owners,receiverType,field) {
+  return ['reference','value'].includes(types.get(receiverType).kind)?receiverType:owners.get(field).owner;
+}
 export function actualFieldResolver(types,views,owners,charge) {
   return (actual,id,view)=>{
     const mapped=views.get(actual+'\0'+view+'\0'+id);

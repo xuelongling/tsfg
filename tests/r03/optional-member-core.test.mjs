@@ -7,7 +7,7 @@ import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {buildTypedReferenceViews,writeTypedReferenceViews} from '../../compiler/typed-reference-views.mjs';
 import {writeTypedFieldBacking} from '../../compiler/typed-field-backing.mjs';
 import {typedReferenceAuthority} from '../../compiler/typed-reference-authority.mjs';
-import {memberPresence,actualFieldResolver,undefinedMemberType} from '../../compiler/member-presence.mjs';
+import {memberPresence,actualFieldResolver,fieldReceiverView,undefinedMemberType} from '../../compiler/member-presence.mjs';
 import {canonical,sha256,scalarTypeIds} from '../../compiler/identity.mjs';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import narrowCopy from './testdata/typed-array-entry/narrow-copy.json' with {type:'json'};
@@ -52,6 +52,33 @@ test('controlled owned-catalogue seam distinguishes legitimate missing from unkn
   assert.throws(()=>typedReferenceAuthority(wrongType),/invalid member authority/);
   let count=0;const members=memberPresence(hir,()=>{if(++count>100000)throw Error('work');});
   assert.equal(members.compatible(undefinedMemberType,field.propertyPresence.declaredType),false,'read union is not explicit assignment permission');
+});
+test('inherited optional field uses the actual receiver view witness',()=>{
+  // Extend the owned catalogue in memory to model a witness targeting a derived view.
+  const hir=actual(),base=hir.types.find(type=>type.fields?.some(field=>field.propertyPresence?.optional)),
+    member=base.fields.find(field=>field.propertyPresence?.optional),derived=sha256('optional inherited receiver view');
+  const catalogue=[...hir.types,{id:derived,kind:'reference',base:base.id,fields:[],methods:[]}];
+  const compatibilityWitnesses=hir.compatibilityWitnesses.filter(row=>row.compatibility.targetType===base.id)
+    .map(({compatibility:{sourceType,members},missingOptionalProperties})=>({
+      compatibility:{sourceType,targetType:derived,members},missingOptionalProperties}));
+  assert.equal(compatibilityWitnesses.length,2);
+  const {views}=typedReferenceAuthority({...hir,types:catalogue,compatibilityWitnesses}),
+    types=new Map(catalogue.map(type=>[type.id,type])),owners=new Map(catalogue.flatMap(type=>(type.fields??[])
+      .map(field=>[field.id,{owner:type.id,field}]))),dispatch=new Map();
+  const missing={missing:true,type:undefinedMemberType};
+  for(const view of views.values())for(const pair of view.fields)
+    dispatch.set([view.actualType,view.targetType,pair.target].join('\0'),pair.missing?missing:pair.source);
+  const resolve=actualFieldResolver(types,dispatch,owners,()=>{}),view=fieldReceiverView(types,owners,derived,member.id);
+  assert.equal(view,derived);
+  for(const {compatibility,missingOptionalProperties} of compatibilityWitnesses) {
+    const source=compatibility.sourceType,projected=compatibility.members.find(pair=>pair.target===member.id);
+    if(projected)assert.equal(resolve(source,member.id,view),owners.get(projected.source).field);
+    else {
+      assert.ok(missingOptionalProperties.includes(member.id));
+      assert.deepEqual(resolve(source,member.id,view),missing);
+    }
+    assert.equal(resolve(source,member.id,base.id),null);
+  }
 });
 // This controlled owned-catalogue seam exercises the production authority, not Source execution.
 for(const relation of ['nominal','structural','unknown'])test('descendant reference field uses '+relation+' relation at the owned authority seam',()=>{
