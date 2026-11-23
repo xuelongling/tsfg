@@ -103,11 +103,67 @@ test("Snapshot materialization rejects malformed successful response rows", asyn
   });
 });
 
+test("Snapshot diagnostics belong to the current input and carry matching UTF-16 locations", async t => {
+  const frames = await capturedFrames();
+  const request = JSON.parse(frames["request.json"].toString("utf8"));
+  const prefix = "// 😀\r\n// 😺\u2028";
+  const line = "export function bad(): i32 { return missing; }";
+  const source = prefix + line;
+  request.files.find(file => file.path === request.rootFile).content = source;
+  const prepared = await prepareFrontendInput(request, true);
+  assert.equal(prepared.status, "ready");
+  const startColumn = line.indexOf("missing"), endColumn = startColumn + "missing".length;
+  const range = { start: prefix.length + startColumn, end: prefix.length + endColumn };
+  const diagnostic = {
+    code: "r01-d-unresolved-name", file: request.rootFile, range,
+    primary: { sourceId: request.rootFile, ...range, startLine: 2, startColumn, endLine: 2, endColumn },
+  };
+  const zero = { start: 0, end: 0 };
+  const global = { code: "r02b-d-input", file: request.rootFile, range: zero,
+    primary: { sourceId: request.rootFile, ...zero, startLine: 0, startColumn: 0, endLine: 0, endColumn: 0 } };
+  const declaration = request.declarations.paths[0];
+  const declarationDiagnostic = { ...global, file: declaration, primary: { ...global.primary, sourceId: declaration } };
+  const eofRange = { start: source.length, end: source.length };
+  const eof = { ...diagnostic, range: eofRange,
+    primary: { ...diagnostic.primary, ...eofRange, startColumn: line.length, endColumn: line.length } };
+  const check = (...diagnostics) => materializeFrontendResponse(prepared, JSON.stringify({ status: "error", diagnostics }), undefined);
+  const valid = [diagnostic, declarationDiagnostic, global, eof];
+  assert.deepEqual(check(...valid), { status: "error", inputIdentity: prepared.inputIdentity, diagnostics: valid });
+  await t.test("the locked producer strips a leading BOM before computing positions", async () => {
+    request.files.find(file => file.path === request.rootFile).content = "\uFEFF" + source;
+    const withBom = await prepareFrontendInput(request, true);
+    assert.equal(withBom.status, "ready");
+    const response = JSON.stringify({ status: "error", diagnostics: valid });
+    assert.deepEqual(materializeFrontendResponse(withBom, response, undefined),
+      { status: "error", inputIdentity: withBom.inputIdentity, diagnostics: valid });
+  });
+  const foreign = "/elsewhere/other.ts";
+  const reversed = { start: range.end, end: range.start };
+  const overrun = { ...range, end: source.length + 1 };
+  for (const { name, change } of [
+    { name: "foreign source", change: { file: foreign, primary: { ...diagnostic.primary, sourceId: foreign } } },
+    { name: "file disagrees with primary", change: { file: declaration } },
+    { name: "reversed offsets", change: { range: reversed, primary: { ...diagnostic.primary, ...reversed } } },
+    { name: "end past the source", change: { range: overrun, primary: { ...diagnostic.primary, ...overrun } } },
+    { name: "range disagrees with primary", change: { range: zero } },
+    { name: "missing end coordinate", change: { primary: { ...diagnostic.primary, endColumn: undefined } } },
+    { name: "wrong line and column for offset", change: {
+      primary: { ...diagnostic.primary, startLine: 1, startColumn: range.start - "// 😀\r\n".length },
+    } },
+    { name: "blank code", change: { code: " " } },
+  ]) await t.test(name, () => {
+    assert.deepEqual(check(diagnostic, { ...diagnostic, ...change }),
+      { status: "tool-error", inputIdentity: prepared.inputIdentity, message: "incomplete frontend diagnostics" });
+  });
+});
+
 test("Snapshot materialization rejects malformed UTF-8 and preserves a genuine replacement character", async () => {
   const frames = await capturedFrames();
   const prepared = await prepareFrontendInput(JSON.parse(frames["request.json"].toString("utf8")), true);
   assert.equal(prepared.status, "ready");
-  const diagnostic = { code: "source-diagnostic", primary: { sourceId: prepared.rootFile }, message: "中�" };
+  const range = { start: 0, end: 0 };
+  const diagnostic = { code: "source-diagnostic", file: prepared.rootFile, range, message: "中�",
+    primary: { sourceId: prepared.rootFile, ...range, startLine: 0, startColumn: 0, endLine: 0, endColumn: 0 } };
   const valid = Buffer.from(JSON.stringify({ status: "error", diagnostics: [diagnostic] }));
   const replacement = Buffer.from("�");
   const offset = valid.indexOf(replacement);

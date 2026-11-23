@@ -199,6 +199,36 @@ function isResponseBody(value) {
     && statementBodies.every(key => statement[key] == null || isResponseBody(statement[key])));
 }
 
+/** @param {unknown} diagnostics @param {{path: string, content: string}[]} files */
+function matchesDiagnosticSources(diagnostics, files) {
+  if (!Array.isArray(diagnostics) || diagnostics.length === 0) return false;
+  // The locked Source VFS removes one leading UTF-8 BOM before parsing.
+  const sources = new Map(files.map(({ path, content }) =>
+    [path, content.startsWith("\uFEFF") ? content.slice(1) : content]));
+  /** @type {Map<string, number[]>} */
+  const lineStarts = new Map();
+  return diagnostics.every(diagnostic => {
+    if (!responseRecord(diagnostic) || typeof diagnostic.code !== "string" || !diagnostic.code.trim()
+        || !responseRecord(diagnostic.primary) || !responseRecord(diagnostic.range)) return false;
+    const { file, range, primary } = diagnostic;
+    const { sourceId, start, end, startLine, startColumn, endLine, endColumn } = primary;
+    const source = sources.get(sourceId);
+    if (source === undefined || file !== sourceId || start !== range.start || end !== range.end
+        || ![start, end, startLine, startColumn, endLine, endColumn].every(Number.isSafeInteger)
+        || start < 0 || end < start || end > source.length) return false;
+    let starts = lineStarts.get(sourceId);
+    if (!starts) {
+      starts = [0];
+      for (const lineBreak of source.matchAll(/\r\n|[\r\n\u2028\u2029]/g))
+        starts.push(lineBreak.index + lineBreak[0].length);
+      lineStarts.set(sourceId, starts);
+    }
+    const matchesPosition = (offset, line, column) => column >= 0
+      && offset === starts[line] + column && offset < (starts[line + 1] ?? source.length + 1);
+    return matchesPosition(start, startLine, startColumn) && matchesPosition(end, endLine, endColumn);
+  });
+}
+
 /** Shared owned conversion for the locked transport and captured Go responses.
  * @param {any} prepared @param {string | Uint8Array} response @param {any} frontendSource
  */
@@ -217,9 +247,7 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
   if (output === null || typeof output !== "object" || Array.isArray(output)) return invalid;
   if (frontendSource?.kind === "owned-go-response") return ownClosureSnapshot(prepared, output, frontendSource, responseText);
   if (output.status === "error") {
-    if (!Array.isArray(output.diagnostics) || output.diagnostics.length === 0
-        || output.diagnostics.some(diagnostic => typeof diagnostic?.code !== "string"
-          || typeof diagnostic.primary?.sourceId !== "string")) {
+    if (!matchesDiagnosticSources(output.diagnostics, files)) {
       return { status: "tool-error", inputIdentity, message: "incomplete frontend diagnostics" };
     }
     return deepFreeze({ status: "error", inputIdentity, diagnostics: output.diagnostics });
