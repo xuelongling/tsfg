@@ -145,6 +145,8 @@ function decodeCompilerText(bytes,diagnostic){
 export async function compileSystemQuery(bytes,context,options){
   const {facts,context:sourceContext}=readSystemQueryFactsAndContext(bytes,context);
   const {core:corePath,optimize,effects,cpuBatch,cpuLLVM,tmeta}=options;
+  if(cpuLLVM!==undefined&&cpuLLVM!=='dialect'&&cpuLLVM!=='ir')
+    throw new TypeError('r10-system-query-llvm: unsupported output format');
   const executable=await verifiedConsumer(corePath,'core');
   const consumeQuery=(command,input)=>consume(executable,['--system-query',command],input);
   const coreBytes=consumeQuery(optimize?'--optimize':'--canonicalize',emitSystemQueryCore(facts,sourceContext));

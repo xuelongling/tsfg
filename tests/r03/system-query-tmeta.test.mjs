@@ -46,6 +46,13 @@ test('Query tmeta original-context/current-manifest gates',async()=>{
   assert.match(queryTmetaSchema,/^sha256:[0-9a-f]{64}$/);
 });
 
+test('Query rejects an undeclared LLVM output format before tool admission',async()=>{
+  const input=cases.at(-1),options={core:'missing',tmeta:true};
+  Object.assign(options,{cpuLLVM:'llvm-ir'});
+  await assert.rejects(compileSystemQuery(input.bytes,input.context,options),
+    /r10-system-query-llvm: unsupported output format/);
+});
+
 test('Query public pipeline owns its Source context before artifact admission',{skip:!enabled},async()=>{
   const input=cases.at(-1),requestBytes=Buffer.from(input.context.requestBytes);
   let reads=0;
