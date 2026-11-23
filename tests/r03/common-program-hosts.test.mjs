@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {readCommonProgramFacts,verifyCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {buildCommonProgramHir,verifyCommonProgramHir} from '../../compiler/common-program-hir.mjs';
+import {printHir,readHir,verifyHir} from '../../compiler/hir.mjs';
 import {createCommonProgramPublication,analyzeCommonProgram,verifyCommonKernelGroup,verifyCommonKernelProof} from '../../compiler/common-program-analysis.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {commonEffects} from '../../compiler/common-program-effects.mjs';
@@ -131,9 +132,24 @@ test('Host resources in an unobserved fixed reader upper do not grant readonly h
 });
 
 const extendedBytes=readFileSync(new URL('./testdata/common-counter-host/counter-extended.json',import.meta.url)),extendedFacts=readCommonProgramFacts(extendedBytes),
-  extendedHir=buildCommonProgramHir(extendedFacts,{family:'tsfg.common-program-context-candidate',version:2,factsBytes:extendedBytes,expectedPackageId:extendedFacts.packageId},context),
+  extendedInputContext={family:'tsfg.common-program-context-candidate',version:2,factsBytes:extendedBytes,expectedPackageId:extendedFacts.packageId},
+  extendedHir=buildCommonProgramHir(extendedFacts,extendedInputContext,context),
   extendedPublication=createCommonProgramPublication(extendedHir),extendedByName=new Map(extendedHir.functions.map(fn=>[fn.name,fn])),
   extendedTargets=names=>names.map(name=>extendedByName.get(name).id).sort();
+test('explicit Source facts retain the verified Counter binding in the Common HIR round trip',()=>{
+  for(const [current,source,fixed]of [[hir,inputContext,publication],[extendedHir,extendedInputContext,extendedPublication]]){
+    const text=printHir(current),bytes=Buffer.from(text),selection={publication:fixed,request};
+    assert.deepEqual(verifyHir(current,source,selection),current);
+    assert.equal(printHir(current,source,selection),text);
+    assert.deepEqual(readHir(bytes,source,selection),current);
+  }
+});
+test('another complete Source facts package cannot rebind Counter HIR',()=>{
+  const bytes=Buffer.from(printHir(hir)),error={code:'r03-common-program-context'};
+  assert.throws(()=>verifyHir(hir,extendedInputContext),error);
+  assert.throws(()=>printHir(hir,extendedInputContext),error);
+  assert.throws(()=>readHir(bytes,extendedInputContext),error);
+});
 test('official extended Source preserves all originals and proves the independent pure kernel pair',()=>{
   assert.equal(sha256(extendedBytes),'sha256:8faa27fb5ccbbcf805530b22ae726c87ba27dd9f969294444a3e49ccf9247be1');
   assert.equal(extendedHir.functions.length,9);assert.equal(extendedHir.sources.length,4);assert.equal(extendedHir.closure.roots.length,8);

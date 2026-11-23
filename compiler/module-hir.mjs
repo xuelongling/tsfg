@@ -38,7 +38,7 @@ const types = scalarTypeIds;
 export function verifyHir(hir, factsContext = undefined, callPublicationContext = undefined) {
   if(isCommonProgramContext(factsContext)||(factsContext===undefined&&familyOf(hir)==='tsfg.program-hir-candidate')){
     const checked=verifyCommonProgramHir(hir);
-    if(factsContext!==undefined)commonCheck(isCommonProgramContext(factsContext)&&commonSame(checked,buildCommonProgramHir(checked.snapshot,factsContext)),'context');
+    if(factsContext!==undefined)commonCheck(isCommonProgramContext(factsContext)&&commonSame(checked,buildCommonProgramHir(checked.snapshot,factsContext,checked.hostContext)),'context');
     if(callPublicationContext!==undefined){
       commonBudget(callPublicationContext);
       commonRecord(callPublicationContext,['publication','request']);
