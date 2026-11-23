@@ -47,14 +47,9 @@ pub const String = struct {
         self.owner.release();
         self.* = undefined;
     }
-    // Cross-instance argument transfer copies logical units, never a heap address.
+    // Cross-instance argument transfer preserves code units in an owned copy.
     pub fn import(self: String, destination: *Owner) !Handle {
         if (self.owner == destination) return destination.heap.retain(self.handle, .persistent);
-        const length = try self.owner.heap.stringLength(self.handle);
-        const allocator = destination.budget.allocator();
-        const units = try allocator.alloc(u16, length);
-        defer allocator.free(units);
-        _ = try self.owner.heap.copyStringCodeUnits(self.handle, units);
-        return destination.heap.createString(units, .persistent);
+        return destination.heap.copyStringFrom(&self.owner.heap, self.handle, .persistent);
     }
 };

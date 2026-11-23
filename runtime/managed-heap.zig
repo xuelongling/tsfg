@@ -167,6 +167,20 @@ pub const ManagedHeap = struct {
         return self.publishString(payload, slot, scope);
     }
 
+    /// Copy an existing canonical String into independent storage in this heap.
+    pub fn copyStringFrom(self: *ManagedHeap, source: *ManagedHeap, handle: Handle, lifetime: Lifetime) Error!Handle {
+        const original = (try source.resolve(handle)).payload;
+        if (original != .string) return error.TypeMismatch;
+        try self.check();
+        const scope = try self.scopeFor(lifetime);
+        if (self.next_identity == std.math.maxInt(u64)) return error.IdentityExhausted;
+        const payload = try original.clone(self.allocator);
+        errdefer payload.deinit(self.allocator);
+        const slot = try self.availableRoot();
+        try self.owned().objects.ensureUnusedCapacity(self.allocator, 1);
+        return self.publishString(payload, slot, scope);
+    }
+
     /// New String ownership; both source handles and their payloads remain unchanged.
     pub fn concatStrings(self: *ManagedHeap, left: Handle, right: Handle, lifetime: Lifetime) Error!Handle {
         const lhs = (try self.resolve(left)).payload;

@@ -57,6 +57,34 @@ test "cross-instance arguments preserve code units with independent ownership" {
     try std.testing.expectEqual(@as(u16, 0xdc00), try second.heap.readStringCodeUnit(copied, 1));
 }
 
+test "cross-instance String arguments fit their owned encoding without UTF16 staging" {
+    const destination = try values.Owner.create(a);
+    defer destination.release();
+    var units = [_]u16{0x41} ** 4096;
+    @memcpy(units[0..4], &[_]u16{ 0, 0xd83d, 0xde00, 0x41 });
+    units[units.len - 1] = 0xdc00;
+    const imported = copy: {
+        const original = try values.Owner.create(a);
+        defer original.release();
+        const handle = try original.heap.createString(&units, .persistent);
+        defer original.heap.release(handle) catch unreachable;
+        var argument = try values.String.retain(original, handle);
+        defer argument.deinit();
+        const byte_length = try original.heap.stringByteLength(handle);
+        destination.budget.limit = byte_length;
+        try std.testing.expectError(error.OutOfMemory, argument.import(destination));
+        try std.testing.expectEqual(@as(usize, 0), destination.budget.used);
+        try std.testing.expectEqual(@as(usize, 0), try destination.heap.objectCount());
+        destination.budget.limit = byte_length + 2048;
+        try std.testing.expect(destination.budget.limit < units.len * @sizeOf(u16));
+        break :copy try argument.import(destination);
+    };
+    defer destination.heap.release(imported) catch unreachable;
+    var copied: [units.len]u16 = undefined;
+    try std.testing.expectEqual(units.len, try destination.heap.copyStringCodeUnits(imported, &copied));
+    try std.testing.expectEqualSlices(u16, &units, &copied);
+}
+
 test "UTF16 argument takes its only free root after allocation failures" {
     const fixture = try std.json.parseFromSlice(std.json.Value, a, "[0,56320]", .{});
     defer fixture.deinit();
