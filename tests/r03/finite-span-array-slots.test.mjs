@@ -6,12 +6,17 @@ import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,verifyHir,readHir,printHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs';
+import {projectTypedArrayFacts} from '../../compiler/typed-array-project.mjs';
+import {prepareArrayCalls} from '../../compiler/array-call-context.mjs';
+import {consumeReadSpanPlan,deriveReadSpanPlan} from '../../compiler/array-readspan-model.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
 const root=new URL('./testdata/typed-array-span-array-slots/',import.meta.url);
 const expected=JSON.parse(await readFile(new URL('source-expected.json',root),'utf8'));
 const packets=['512d8c5d1d5c481f27d7d9af0a13ef5e205f6289b37abf305acc1c225faf399e',
   '3df9edcb311c19ea96986e5efb699cd8b86f87802a52e7d38dcb7baa64e19c14'];
+const nestedArrayPacket=new URL('./testdata/typed-array-source514/9068b0b5e16dd0715dc9bc165c9d067a6594b1ce67d21d2477cbe5df560146de-package.json',import.meta.url);
+const nestedArrayPacketHash='sha256:29e6c213c43c012abe71cba8869fc7339f73ce74327ebed4f2c5ad9297520f6f';
 for(const [index,oracle]of expected.cases.entries())test('SLOT25v '+oracle.name+' consumes the real current slot version',async t=>{
   const bytes=await readFile(new URL(oracle.sha256+'-package.json',root));assert.equal(sha256(bytes).slice(7),packets[index]);
   const facts=readTypedArrayFacts(bytes),source=facts.payload.files.find(file=>file.path===facts.payload.rootFile);
@@ -71,8 +76,8 @@ for(const [index,oracle]of expected.cases.entries())test('SLOT25v '+oracle.name+
 });
 
 test('a stored local Array keeps its owner through a checked slot read and dense writes',async()=>{
-  const bytes=await readFile(new URL('./testdata/typed-array-source514/9068b0b5e16dd0715dc9bc165c9d067a6594b1ce67d21d2477cbe5df560146de-package.json',import.meta.url));
-  assert.equal(sha256(bytes),'sha256:29e6c213c43c012abe71cba8869fc7339f73ce74327ebed4f2c5ad9297520f6f');
+  const bytes=await readFile(nestedArrayPacket);
+  assert.equal(sha256(bytes),nestedArrayPacketHash);
   const facts=readTypedArrayFacts(bytes),source=facts.payload.files.find(file=>file.path===facts.payload.rootFile);
   const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
   const publication=staticPublication(facts),built=buildHir(facts,context,publication);
@@ -93,4 +98,48 @@ test('a stored local Array keeps its owner through a checked slot read and dense
       ['a[2]=3',backing.owner,'c:2'],
     ]);
   }
+});
+
+test('assignment-result keeps the RHS Array owner for ReadSpan',async t=>{
+  const [spanBytes,nestedBytes]=await Promise.all([
+    readFile(new URL(expected.cases[0].sha256+'-package.json',root)),readFile(nestedArrayPacket),
+  ]);
+  assert.equal(sha256(spanBytes).slice(7),packets[0]);
+  assert.equal(sha256(nestedBytes),nestedArrayPacketHash);
+  const facts=readTypedArrayFacts(spanBytes),hir=projectTypedArrayFacts(facts);
+  const nested=projectTypedArrayFacts(readTypedArrayFacts(nestedBytes));
+  const [fn]=hir.functions,[a,b,slots,,overwrite,resize,returned]=fn.body;
+  const [,outer,readOuter]=nested.functions[0].body;
+  const readSpan=slots.initializer.elements[0];
+  const [aRef,offset,length]=readSpan.arguments,[bRef]=overwrite.expression.value.arguments;
+  const types=[...hir.types,nested.types.find(row=>row.id===outer.binding.type)];
+  const destination={...outer,initializer:{...outer.initializer,elements:[aRef]}};
+
+  // Use retained Source8 shapes to compose a local owner-analysis input.
+  const analyse=rhs=>{
+    const type=rhs.type;
+    const target={...overwrite.expression.target,receiver:readOuter.initializer.receiver,type,declaredType:type};
+    const assignment={...overwrite.expression,target,value:rhs,type,declaredType:type};
+    const span={...readSpan,arguments:[assignment,offset,length]};
+    const saved={...slots,initializer:{...slots.initializer,elements:[span]}};
+    const variant={...hir,types,functions:[{...fn,body:[a,b,destination,saved,resize,returned]}]};
+    const prepared=prepareArrayCalls(variant,staticPublication(facts));
+    const {plan,work}=deriveReadSpanPlan(variant,prepared);
+    return {state:plan.functions[0],consume:()=>consumeReadSpanPlan({...variant,readSpanPlan:plan},prepared,work)};
+  };
+  await t.test('disjoint resize after borrowing the assigned B',()=>{
+    const {state,consume}=analyse(bRef);
+    consume();
+    const store=state.events.find(event=>event.kind==='array-store-effect');
+    const create=state.events.find(event=>event.kind==='view-create-complete');
+    assert.equal(store.owner.allocationSite,outer.initializer.allocationSite);
+    assert.ok(store.sequence<create.sequence);
+    assert.equal(state.views[0].owner.allocationSite,b.initializer.allocationSite);
+  });
+  await t.test('the same resize conflicts if the assigned value is A',()=>{
+    assert.throws(analyse(aRef).consume,{
+      code:'r03-d-readspan-structural-conflict',
+      primary:{sourceId:fn.sourcePath,...resize.expression.range},
+    });
+  });
 });

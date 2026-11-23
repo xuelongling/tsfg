@@ -279,7 +279,10 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         if(['arrayCompoundAssignment','arrayUpdate'].includes(value.kind))read(receiver);
         const rhs=value.value?expression(value.value,[...path,'value'],index):null;
         mutate(value,path,receiver??unknownArrayOwner,index,value.kind==='arrayResizeChecked');
-        if(value.kind==='arrayStoreDenseChecked'&&type.isOwner(value.value.type))writeContents(receiver,rhs);
+        if(value.kind==='arrayStoreDenseChecked'&&type.isOwner(value.value.type)){
+          owner=rhs;
+          writeContents(receiver,rhs);
+        }
       }else if(hasConditionalArrayRhs(value)) {
         const left=expression(value.left,[...path,'left'],index),before=snapshot(bindings);
         const storageBefore=stored.state(),priorTruth=snapshot(truthBindings);
