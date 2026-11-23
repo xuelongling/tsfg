@@ -222,7 +222,6 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         contents.set(canonical(owner),{receiver:owner,elements:mergeArrayOwners(children)});
       }else if(['call','construct','superConstruct'].includes(value.kind)) {
         if(++callCount>32)fail('limit');
-        if(value.target!==hir.intrinsics.readSpan.id)exactLengthJoin=false;
         const receiver=value.receiver?expression(value.receiver,[...path,'receiver'],index):null;
         const actuals=value.arguments.map((child,i)=>expression(child,[...path,'arguments',i],index));
         if(value.target===hir.intrinsics.readSpan.id) {
@@ -263,7 +262,14 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
               call.returnedView=args.find(row=>row.index===slots[0])??null;
           }
           storageCall=call;calls.push(call);operations.push({kind:'call',path,range:value.range,call,value,statementIndex:index});
-          for(const argument of args)lengths.set(canonical(argument.owner),null);
+          // Only the full fixed upper can establish a length-preserving call.
+          if(targets.some(arm=>{
+            charge();const {local,parameters}=contracts.get(arm.target).upper;
+            return local.structural||parameters.some(parameter=>{charge();return parameter.structural;});
+          })){
+            exactLengthJoin=false;
+            for(const argument of args)lengths.set(canonical(argument.owner),null);
+          }
         }
       }else if(['arrayStoreDenseChecked','arrayResizeChecked','arrayCompoundAssignment','arrayUpdate'].includes(value.kind)) {
         const target=value.target,receiver=expression(target.receiver,[...path,'target','receiver'],index);

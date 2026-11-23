@@ -64,6 +64,36 @@ for(const row of manifest)test('fresh Source v8 ordinary consumer: '+row.name,as
     const narrower=staticPublication(facts,{touch:{parameters:{0:{read:true,write:false,structural:false}},local:none}});
     const allowed=buildHir(facts,selected,narrower);assert.equal(allowed.status,'ok',JSON.stringify(allowed.diagnostics));
     assert.deepEqual(readHir(Buffer.from(printHir(allowed.hir,selected,narrower)),selected,narrower),allowed.hir);
+    await t.test('a fixed read-only call preserves the length of the borrowed local Array',async()=>{
+      const donor=manifest.find(item=>item.name==='serial-overwrite');
+      const donorBytes=await readFile(new URL('./testdata/typed-array-consumer-v8/'+donor.file,import.meta.url));
+      assert.equal(createHash('sha256').update(donorBytes).digest('hex'),donor.sha256);
+      const [array,,write]=projectTypedArrayFacts(readTypedArrayFacts(donorBytes)).functions[0].body;
+      const caller=allowed.hir.functions.find(fn=>fn.name==='read'),[view,call,returned]=caller.body;
+      const receiver=write.expression.target.receiver;
+      assert.equal(receiver.type,caller.parameters[0].type);
+      // Combine the retained local and call shapes only at the analysis seam.
+      const useLocal=expression=>({...expression,arguments:[receiver,...expression.arguments.slice(1)]});
+      const body=[array,{...view,initializer:useLocal(view.initializer)},{...call,expression:useLocal(call.expression)},write,returned];
+      const projected={...allowed.hir,functions:allowed.hir.functions.map(fn=>fn===caller?{...caller,body}:fn)};
+      const analyze=fixed=>{
+        const prepared=prepareArrayCalls(projected,fixed),{plan,work}=deriveReadSpanPlan(projected,prepared);
+        const state=plan.functions.find(row=>row.functionId===caller.id);
+        const store=state.events.find(event=>event.kind==='array-store-effect');
+        assert.ok(store.sequence>state.views[0].origin.createEvent&&store.sequence<state.views[0].lastUseEvent);
+        return {store,consume:()=>consumeReadSpanPlan({...projected,readSpanPlan:plan},prepared,work)};
+      };
+      const quiet=analyze(narrower);
+      assert.deepEqual([quiet.store.exactLength,quiet.store.nonStructural],[1,true]);
+      quiet.consume();
+      for(const [fixed,sourceKind] of [[publication,'fixedCall'],[staticPublication(facts,{touch:{
+        parameters:{0:{...none,read:true}},local:{...none,structural:true}}}),'fixedCallLocal']]){
+        const wide=analyze(fixed);
+        assert.deepEqual([wide.store.exactLength,wide.store.nonStructural],[null,false]);
+        assert.throws(wide.consume,error=>error instanceof Error&&Reflect.get(error,'code')==='r03-d-readspan-structural-conflict'
+          &&Reflect.get(error,'conflict').sourceKind===sourceKind);
+      }
+    });
     return;
   }
   if(row.name==='tail-array-call-return-local-escape') {
