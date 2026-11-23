@@ -5,7 +5,8 @@ import {readFileSync} from 'node:fs';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
-import {emitCommonProgramCore} from '../../compiler/common-program-core.mjs';
+import {commonProgramCore,emitCommonProgramCore} from '../../compiler/common-program-core.mjs';
+import {commonProgramPlan} from '../../compiler/common-program-plan.mjs';
 import {commonBorrowGraph} from '../../compiler/common-program-borrows.mjs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 import {sha256} from '../../compiler/identity.mjs';
@@ -23,6 +24,48 @@ for(const name of ['last-use','fresh-disjoint','owner-alias-conflict','field-rep
   const hir=actual(name),publication=createCommonProgramPublication(hir),request={targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
   if(name==='owner-alias-conflict')assert.throws(()=>emitCommonProgramCore(hir,publication,request),/** @param {any} e */e=>e.code==='r03-common-program-borrow-conflict');
   else assert.match(emitCommonProgramCore(hir,publication,request),/tsfg_program.readspan/);
+});
+
+test('synthetic actual-flow: loading a Holder after the Span last use does not consume its descriptor',()=>{
+  const hir=actual('last-use'),publication=createCommonProgramPublication(hir),records=new Map(publication.contracts.map(row=>[row.functionId,row]));
+  // The original Source and HIR are fixed. Insert one unused Holder read at
+  // the actual-flow seam, and optionally dereference the carried Span.
+  const check=consume=>{
+    const program=commonProgramPlan(hir,records),plan=program.plans.find(row=>row.owner.name==='borrowOrdinary');
+    assert.ok(plan);
+    const block=plan.graph.blocks.find(row=>row.instructions.some(op=>op.name==='tsfg_program.array_resize'));
+    assert.ok(block);
+    const instructions=block.instructions,reads=instructions.filter(op=>op.name==='tsfg_program.array_read');
+    assert.equal(reads.length,2);
+    const [holderRead,spanRead]=reads,field=instructions.find(op=>op.name==='tsfg_program.field_load'&&op.operands[0]===holderRead.result);
+    assert.ok(field);
+    const resize=instructions.findIndex(op=>op.name==='tsfg_program.array_resize');
+    const tail=instructions.splice(resize+1);
+    block.terminated=false;
+    const arg=name=>({name,type:plan.graph.registers.get(name).view});
+    const copy=(op,operands)=>plan.graph.emit(block,op.name.slice('tsfg_program.'.length),operands,op.view,op.properties,op.range);
+    const holder=copy(holderRead,holderRead.operands.map(arg));
+    if(consume){
+      const span=copy(field,[holder]);
+      copy(spanRead,[span,arg(spanRead.operands[1])]);
+    }
+    instructions.push(...tail);
+    block.terminated=true;
+    return analyzeCommonGraphs(program,records);
+  };
+  assert.doesNotThrow(()=>check(false));
+  assert.throws(()=>check(true),{code:'r03-common-program-borrow-conflict'});
+});
+
+test('Holder transport does not appear as a Span use in the borrow proof',()=>{
+  const hir=actual('last-use'),publication=createCommonProgramPublication(hir),request={targets:[]};
+  const core=commonProgramCore(hir,publication,request,{borrowProof:true}),owner=hir.functions.find(row=>row.name==='borrowOrdinary');
+  const source=hir.sources.find(row=>row.path===owner.sourcePath);
+  assert.equal(core.text,emitCommonProgramCore(hir,publication,request));
+  const reads=core.borrowProof.events.uses.filter(event=>event.at.functionId===owner.id&&event.at.name==='array_read');
+  const access='holders[0].span[0]',start=source.content.indexOf(access,owner.range.start),end=start+access.length;
+  assert.ok(start>=owner.range.start&&end<=owner.range.end);
+  assert.deepEqual(reads.map(({at:{source:{path,start,end}}})=>({sourceId:path,start,end})),[{sourceId:owner.sourcePath,start,end}]);
 });
 
 // These compact graph controls are synthetic domain checks, not Source/Go or

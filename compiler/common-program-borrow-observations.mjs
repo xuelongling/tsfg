@@ -64,7 +64,7 @@ export function commonClosureHolding({model,objects,records,closedTarget}){
 export function commonBorrowCollector({spend,types,objects}) {
   const kind=ref=>types.get(objects.get(ref)?.type)?.kind;
   const environmentSlot=(ref,slot)=>objects.get(ref)?.type.startsWith('env:')&&(slot.startsWith(ref+'/slot/')||slot===ref+'/parent');
-  function collect(value,heap,mode) {
+  function collect(value,heap,mode,deep=true) {
     const ids=new Set(),seen=new Set(),cells=new Set(),pending=[value],hard=mode==='hard';let unknown=false,prefixes=null;
     for(let i=0;i<pending.length;i++){
       spend();const v=pending[i];unknown ||= v.unknown;
@@ -78,6 +78,7 @@ export function commonBorrowCollector({spend,types,objects}) {
           continue;
         }
         if(type==='array'&&(mode==='structural'||mode==='owning'))ids.add(ref);
+        if(!deep)continue;
         prefixes ??= commonActualHeapPrefixes(heap,spend);
         for(const [slot,stored]of prefixes.inHeapOrder(ref)){spend(hard?Math.ceil((ref.length+slot.length)/64)+1:1);if(slot.startsWith(ref+'/field/')||slot.startsWith(ref+'/element/')||(mode==='escape'||hard)&&environmentSlot(ref,slot))pending.push(stored);}
       }
@@ -106,10 +107,11 @@ export function commonBorrowObservations({model,records,objects,internalFunction
   function owners(ref,heap){spend();const owner=heap.get(ref+'/owner'),ids=new Set();let pending=!owner||owner.unknown;
     for(const id of owner?.refs??[]){spend();if(kind(id)==='array')ids.add(id);else pending=true;}return {ids,pending:pending||ids.size===0};}
   function define(at,ref,heap,weak=false){graph.define(at,ref,owners(ref,heap),weak);}
-  function use(at,value,heap,view=undefined,where={}){
-    const selected=collect(value,heap,'spans');
+  function use(at,value,heap,view=undefined,where={},deep=true){
+    const selected=collect(value,heap,'spans',deep);
     if(types.get(view)?.kind==='readSpan'){
-      let actual=!selected.pending&&selected.ids.size>0;for(const id of value.tags){spend();actual &&= types.get(id)?.kind==='readSpan';}
+      let actual=!selected.pending&&selected.ids.size>0&&(deep||selected.ids.size===value.refs.size);
+      for(const id of value.tags){spend();actual &&= types.get(id)?.kind==='readSpan';}
       check(actual,'borrow-pending','ReadSpan use has no proved actual descriptor',where);
     }graph.use(at,selected.ids);
   }
@@ -350,7 +352,10 @@ export function commonBorrowObservations({model,records,objects,internalFunction
     proof?.before(c,op,at);
     const name=op.name.replace('tsfg_program.',''),where=origin(c,op);graph.point(at).origin=where;
     const stored=name==='array_store'&&escapingSpans(args[2],state.heap).size?arrayStoreProof(c,args[0],args[2],state):null;
-    if(name==='array_read'||name==='readspan_length')use(at,args[0],state.heap,c.plan.graph.registers.get(op.operands[0]).view,where);
+    // Access consumes a directly selected Span receiver. Loading a container
+    // element transports the stored value without using a nested Span.
+    if(name==='array_read'||name==='array_length'||name==='readspan_length')
+      use(at,args[0],state.heap,c.plan.graph.registers.get(op.operands[0]).view,where,false);
     if(name==='array_resize'){
       let unchanged=!args[0].unknown&&args[0].refs.size>0&&Number.isSafeInteger(args[1].number);
       for(const ref of args[0].refs){spend();unchanged &&= state.heap.get(ref+'/length')?.number===args[1].number;}
