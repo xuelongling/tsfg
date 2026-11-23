@@ -144,6 +144,91 @@ test "module boundaries reject short identities duplicate entries trailing bytes
     };
 }
 
+const LayoutId = [32]u8;
+const LayoutRow = struct {
+    id: LayoutId,
+    kind: @import("typed-layout-input.zig").Kind,
+    payload: []const u8 = &.{},
+};
+
+fn layoutTypeId(name: []const u8) LayoutId {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update("tsfg.type\x00"); hash.update(name); return hash.finalResult();
+}
+
+fn layoutWord(bytes: *std.ArrayList(u8), alloc: std.mem.Allocator, value: u16) !void {
+    var word: [2]u8 = undefined;
+    std.mem.writeInt(u16, &word, value, .little);
+    try bytes.appendSlice(alloc, &word);
+}
+
+fn fixedLayoutRow(alloc: std.mem.Allocator, key: LayoutId, fields: []const LayoutId) !LayoutRow {
+    var type_name: [78]u8 = undefined;
+    const type_id = layoutTypeId(try std.fmt.bufPrint(&type_name, "value<sha256:{s}>", .{std.fmt.bytesToHex(key, .lower)}));
+    var payload: std.ArrayList(u8) = .empty;
+    try payload.appendSlice(alloc, &key);
+    try payload.append(alloc, 0);
+    try layoutWord(&payload, alloc, @intCast(fields.len));
+    const type_hex = std.fmt.bytesToHex(type_id, .lower);
+    for (fields, 0..) |field_type, index| {
+        var name_buffer: [8]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buffer, "f{d}", .{index});
+        var hash = std.crypto.hash.sha2.Sha256.init(.{});
+        hash.update("tsfg.field\x00sha256:"); hash.update(&type_hex); hash.update("\x00"); hash.update(name);
+        try payload.appendSlice(alloc, &hash.finalResult());
+        try layoutWord(&payload, alloc, @intCast(name.len));
+        try payload.appendSlice(alloc, name);
+        try payload.appendSlice(alloc, &field_type);
+        try payload.append(alloc, 0);
+    }
+    return .{ .id = type_id, .kind = .value, .payload = payload.items };
+}
+
+fn layoutModuleBytes(alloc: std.mem.Allocator, rows: []LayoutRow) ![]const u8 {
+    const order = struct {
+        fn less(_: void, left: LayoutRow, right: LayoutRow) bool { return std.mem.lessThan(u8, &left.id, &right.id); }
+    }.less;
+    std.mem.sort(LayoutRow, rows, {}, order);
+    var bytes: std.ArrayList(u8) = .empty;
+    try bytes.appendSlice(alloc, "TSGLAY01");
+    try layoutWord(&bytes, alloc, @intCast(rows.len));
+    for (rows) |row| {
+        try bytes.appendSlice(alloc, &row.id);
+        try bytes.append(alloc, @intFromEnum(row.kind));
+        try bytes.appendSlice(alloc, row.payload);
+    }
+    return bytes.items;
+}
+
+test "canonical layout limits a complete fixed value and its semantic optional wrapper" {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const scalar: LayoutRow = .{ .id = layoutTypeId("i64"), .kind = .scalar, .payload = &.{5} };
+    const absence: LayoutRow = .{ .id = layoutTypeId("undefined"), .kind = .undefined_value };
+    // Each aligned i64 field occupies 16 bytes including its inline tag.
+    const group = try fixedLayoutRow(alloc, .{1} ** 32, &([_]LayoutId{scalar.id} ** 64));
+    const tail = try fixedLayoutRow(alloc, .{2} ** 32, &([_]LayoutId{scalar.id} ** 32));
+    // 63 * (1024 + 8) + (512 + 8) = 65536.
+    const value = try fixedLayoutRow(alloc, .{3} ** 32, &(([_]LayoutId{group.id} ** 63) ++ [_]LayoutId{tail.id}));
+    var plain = [_]LayoutRow{ scalar, absence, group, tail, value };
+    var module = try canonical.load(allocator, try layoutModuleBytes(alloc, &plain));
+    defer module.deinit();
+    try equal(@as(u32, 65536), (try module.find(value.id)).layout.byte_size);
+
+    const members = if (std.mem.lessThan(u8, &absence.id, &value.id)) absence.id ++ value.id else value.id ++ absence.id;
+    const semantic_name = "Union<undefined,value<sha256:" ++ "03" ** 32 ++ ">>";
+    const payload = [_]u8{ 2, 0 } ++ members;
+    var boxed = plain ++ [_]LayoutRow{.{ .id = layoutTypeId(semantic_name), .kind = .union_value, .payload = &payload }};
+    if (canonical.load(allocator, try layoutModuleBytes(alloc, &boxed))) |accepted| {
+        var oversized = accepted;
+        defer oversized.deinit();
+        const actual = (try oversized.find(layoutTypeId(semantic_name))).layout.byte_size;
+        try equal(@as(u32, 65544), actual);
+        return error.AcceptedOversizedCanonicalLayout;
+    } else |err| try equal(error.LayoutLimit, err);
+}
+
 test "logical module decoding and whole catalogue installation are atomic on OOM" {
     const bytes = try read(root ++ "38ac49ad717fc41a9c3fdc4178ac0284ce2e9f26794790d42bb41d6eeba66fe3.bin"); defer allocator.free(bytes);
     var decoded = try canonical.load(allocator, bytes); defer decoded.deinit();

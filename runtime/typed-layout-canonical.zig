@@ -156,6 +156,8 @@ const Builder = struct {
                 result.byte_size = aligned(result.byte_size, result.alignment);
             },
         }
+        // Finite backing may add an aligned tag outside this canonical layout.
+        if (result.byte_size > 65536) return error.LayoutLimit;
         try result.validate(); self.layouts[index] = result; self.laying[index] = false; return result;
     }
     fn cell(self: *Builder, index: usize) Error!cells.Layout {
