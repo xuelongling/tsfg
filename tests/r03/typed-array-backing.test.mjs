@@ -6,7 +6,8 @@ import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir} from '../../compiler/hir.mjs';
 import {buildTypedLayouts} from '../../compiler/typed-layouts.mjs';
 import {buildTypedArrayBacking,writeTypedArrayBacking} from '../../compiler/typed-array-backing.mjs';
-import {scalarTypeIds,sha256} from '../../compiler/identity.mjs';
+import {canonical,scalarTypeIds,sha256} from '../../compiler/identity.mjs';
+import {originId} from '../../compiler/typed-array-schema.mjs';
 import {optionalArrayPublication} from './typed-array-publication-fixtures.mjs';
 const output='E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/array-backing-captures';
 test('real Source narrow allocation has separate identity and actual U capacity through a wide alias',async()=>{
@@ -44,4 +45,46 @@ test('actual Source value/reference/scalar variants, nested owners and readonly 
     await writeFile(output+'/'+name+'.bin',writeTypedArrayBacking(built.hir,context,options));
     await writeFile(output+'/'+name+'.json',JSON.stringify(plan,null,2)+'\n');
   }
+});
+
+test('an exported nested Array parameter publishes both caller backing rows',async()=>{
+  const file=cases.find(([name])=>name==='nested')[1];
+  const retained=await readFile(new URL('./testdata/'+file,import.meta.url));
+  const packet=structuredClone(readTypedArrayFacts(retained)),payload=packet.payload,root=payload.rootFile;
+  const donor=payload.functions[0],outerType=donor.bindings[1].declaredType;
+  const innerType=payload.types.find(row=>row.id===outerType).elementType;
+  const content='export function f(outer: i32[][]): i32 { return outer[0][0]; }\n';
+  const range=(start,end)=>({start,end});
+  const locate=(value,from=0)=>{const start=content.indexOf(value,from);assert.ok(start>=0,value);return range(start,start+value.length);};
+  const nameRange=locate('outer'),annotationRange=locate('i32[][]'),declarationRange=range(0,content.length-1);
+  const parameter={...donor.bindings[1],id:originId(root,nameRange),kind:'parameter',writable:true,
+    nameRange,annotationRange,elementAnnotationRange:range(annotationRange.start,annotationRange.end-2),
+    declarationRange:range(nameRange.start,annotationRange.end)};
+  const use=locate('outer[0][0]'),receiver={kind:'bindingReference',binding:parameter.id,
+    type:outerType,flowType:outerType,range:range(use.start,use.start+'outer'.length)};
+  const checked=(receiver,type,end)=>({kind:'checkedElementAccess',type,flowType:type,receiver,
+    range:range(use.start,end),index:{kind:'numericLiteral',type:'u32',flowType:'u32',token:'0',decimal:'0',range:range(end-2,end-1)}});
+  const fn={...donor,declarationRange,returnAnnotationRange:locate('i32',annotationRange.end),
+    id:sha256('tsfg.array-facts.function.v8\0'+canonical({sourcePath:root,declarationRange})),
+    parameters:[parameter],bindings:[],body:[{kind:'return',range:locate('return outer[0][0];'),
+      value:checked(checked(receiver,innerType,use.end-3),'i32',use.end)}]};
+  payload.functions=[fn];payload.exports[0].functionId=fn.id;
+  payload.entryCompatibilityRoots=[{functionId:fn.id,parameterBinding:parameter.id,
+    origin:{source:root,...parameter.declarationRange},viewType:outerType,roots:[]}];
+  Object.assign(payload.files.find(row=>row.path===root),{content,byteLength:Buffer.byteLength(content),
+    utf16Length:content.length,sha256:sha256(content).slice(7)});
+  const request={family:'tsfg.array-facts-request-candidate',version:packet.version,input:{
+    sourceRoot:payload.sourceRoot,rootFile:root,files:payload.files.map(({path,content,sha256})=>({path,content,sha256})),
+    declarations:payload.declarations,config:payload.config}};
+  packet.requestId=sha256('tsfg.array-facts.request.v8\0'+canonical(request)+'\n');
+  packet.packageId=sha256('tsfg.array-facts.package.v8\0'+packet.schemaHash+'\0'+canonical(payload));
+  const bytes=Buffer.from(canonical(packet)+'\n'),facts=readTypedArrayFacts(bytes);
+  const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
+  const built=buildHir(facts,context);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const array=sha256('tsfg.type\0Array<i32>'),nested=sha256('tsfg.type\0Array<Array<i32>>');
+  const rows=buildTypedArrayBacking(built.hir,context).arrays;
+  assert.deepEqual(rows.map(({typeId,elementType,members})=>({typeId,elementType,members})),[
+    {typeId:array,elementType:scalarTypeIds.i32,members:[scalarTypeIds.i32]},
+    {typeId:nested,elementType:array,members:[array]},
+  ].sort((left,right)=>left.typeId.localeCompare(right.typeId)));
 });

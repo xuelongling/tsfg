@@ -17,7 +17,8 @@ export function buildTypedArrayBacking(input,context,options={}) {
   }
   for(const row of definition.carrierNodes) {
     if(!row.id.endsWith('/elements'))continue;
-    const owner=row.id.slice(0,-9),typeId=nodes.get(owner)?.viewType??owner.split('/entry-owner/')[1],type=types.get(typeId);
+    const owner=row.id.slice(0,-9),entryOwnerMarker='/entry-owner/',entryOwner=owner.lastIndexOf(entryOwnerMarker);
+    const typeId=nodes.get(owner)?.viewType??(entryOwner<0?undefined:owner.slice(entryOwner+entryOwnerMarker.length)),type=types.get(typeId);
     if(type?.kind!=='array')continue;
     const domain=domains.get(row.domainId);require(domain&&!row.pending.length,'unproved element domain');
     let group=groups.get(typeId);
