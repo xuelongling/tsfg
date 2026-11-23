@@ -419,7 +419,7 @@ test('Query standalone LLVM IR binds the checked batch and entry ABI',()=>{
 });
 
 test('Query LLVM dialect binds the retained batch and target',
-  {skip:!process.env.TSFG_QUERY_PAIRED_CAPTURE},()=>{
+  {skip:!process.env.TSFG_QUERY_PAIRED_CAPTURE},async t=>{
   const capture=process.env.TSFG_QUERY_PAIRED_CAPTURE;
   assert.ok(path.isAbsolute(capture));
   const dialect=readFileSync(path.join(capture,'005-llvm-dialect-stdout.bin'));
@@ -431,17 +431,19 @@ test('Query LLVM dialect binds the retained batch and target',
   /**
    * @param {ReturnType<typeof retainedQuery>} retained
    * @param {Buffer} output
+   * @param {boolean} [tmeta]
    */
-  const collect=(retained,output)=>readQueryCompilerOutputs(retained.facts,retained.context,retained.core,
-    {cpuLLVM:'dialect'},(command,input)=>{
+  const collect=(retained,output,tmeta=false)=>readQueryCompilerOutputs(retained.facts,retained.context,retained.core,
+    {cpuLLVM:'dialect',tmeta},(command,input)=>{
       calls.push(command);
       if(command==='--cpu-batch'){
         assert.equal(input,retained.core.toString('utf8'));
         return Buffer.from(retained.payload.batch);
       }
-      assert.equal(command,'--cpu-llvm');
       assert.equal(input,retained.payload.batch);
-      return output;
+      if(command==='--cpu-llvm')return output;
+      assert.equal(command,'--tmeta');
+      return retained.metadata;
     });
   assert.throws(()=>collect(compound,dialect),/r10-system-query-llvm: checked dialect proof differs/);
   assert.deepEqual(calls.splice(0),['--cpu-batch','--cpu-llvm']);
@@ -458,6 +460,25 @@ test('Query LLVM dialect binds the retained batch and target',
     assert.throws(()=>collect(copy,Buffer.from(replacement)),/r10-system-query-llvm: checked dialect proof differs/);
     assert.deepEqual(calls.splice(0),['--cpu-batch','--cpu-llvm']);
   }
+  const entry=original.split('\n').find(line=>line.startsWith('  "llvm.func"'));
+  assert.ok(entry);
+  const entrySymbol=/sym_name = "([^"]+)"/u.exec(entry)?.[1];
+  assert.ok(entrySymbol);
+  const first=original.indexOf(entry),last=original.lastIndexOf('\n}) {');
+  const body=original.slice(first,last),foreignBody=body.replace(entrySymbol,'batch_'+'0'.repeat(64)+'_0');
+  const header=original.slice(0,first),proof=original.slice(last);
+  for(const [name,changed] of [
+    ['wrong function type',original.replace(entry,entry.replace('void (i64,','void (i32,'))],
+    ['wrong calling convention',original.replace(entry,entry.replace('#llvm.cconv<ccc>','#llvm.cconv<fastcc>'))],
+    ['wrong linkage',original.replace(entry,entry.replace('#llvm.linkage<external>','#llvm.linkage<internal>'))],
+    ['missing entry',header+proof],['foreign entry',header+foreignBody+proof],
+    ['duplicate entry',header+body+'\n'+body+proof],['extra entry',header+body+'\n'+foreignBody+proof],
+  ])await t.test('reject '+name,()=>{
+    calls.length=0;
+    assert.notEqual(changed,original);
+    assert.throws(()=>collect(copy,Buffer.from(changed),true),/r10-system-query-llvm: checked entry ABI differs/);
+    assert.deepEqual(calls.splice(0),['--cpu-batch','--cpu-llvm']);
+  });
 });
 
 test('Query LLVM pairing validates the retained batch and target',async t=>{

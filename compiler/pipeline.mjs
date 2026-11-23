@@ -188,19 +188,22 @@ function checkQueryLlvmPair(llvm,batch,target){
 
 /** Match the checked entry and helper definitions emitted by the Query printer.
  * @param {string} llvm @param {import('./system-query-facts.mjs').SystemQueryFacts} facts
+ * @param {'dialect'|'ir'} format
  */
-function checkQueryLlvmEntries(llvm,facts){
+function checkQueryLlvmEntries(llvm,facts,format){
   const fail=()=>{throw new TypeError('r10-system-query-llvm: checked entry ABI differs');};
+  const dialect=format==='dialect';
   // Each byte memref expands to two pointers and three indices. Its extra
   // index is a row stride for an entry and a row byte offset for a helper.
   const column=['ptr','ptr','i64','i64','i64','i64'];
   const floating=/** @param {string} type */ type=>{
-    if(type==='f32')return 'float';
-    if(type==='f64')return 'double';
+    if(type==='f32')return dialect?'f32':'float';
+    if(type==='f64')return dialect?'f64':'double';
     return fail();
   };
   /** @param {string} symbol @param {string} result @param {string[]} types */
   const definition=(symbol,result,types)=>{
+    if(dialect)return symbol+' '+result+' ('+types.join(', ')+')';
     const parameters=types.map((type,index)=>`${type} %${index}`).join(', ');
     return `define ${result} @${symbol}(${parameters}) {`;
   };
@@ -217,8 +220,22 @@ function checkQueryLlvmEntries(llvm,facts){
   for(const helper of facts.scalarHelpers)
     expected.add(definition('batch_helper_'+helper.id.slice(7),floating(helper.sourceReturnType),
       helper.parameters.flatMap(parameter=>parameter.view?column:[floating(parameter.logicalType)])));
-  for(const [line] of llvm.matchAll(/^[ \t]*define\b[^\r\n]*/gmu))
-    if(!expected.delete(line))fail();
+  const definitions=dialect?/^[ \t]*"llvm\.func"[^\r\n]*/gmu:/^[ \t]*define\b[^\r\n]*/gmu;
+  for(const [line] of llvm.matchAll(definitions)){
+    let entry=line;
+    if(dialect){
+      // Match the canonical top-level printer header and read its ABI fields.
+      const properties=/^  "llvm\.func"\(\) <\{(.*)\}> \(\{$/u.exec(line)?.[1]??'';
+      const types=[...properties.matchAll(/(?:^|, )function_type = !llvm\.func<([^>]+)>(?=, |$)/gu)];
+      const symbols=[...properties.matchAll(/(?:^|, )sym_name = "([^"]+)"(?=, |$)/gu)];
+      const conventions=[...properties.matchAll(/(?:^|, )CConv = #llvm\.cconv<([^>]+)>(?=, |$)/gu)];
+      const linkages=[...properties.matchAll(/(?:^|, )linkage = #llvm\.linkage<([^>]+)>(?=, |$)/gu)];
+      if(types.length!==1||symbols.length!==1||conventions.length!==1||conventions[0][1]!=='ccc'||
+        linkages.length!==1||linkages[0][1]!=='external')fail();
+      entry=symbols[0][1]+' '+types[0][1];
+    }
+    if(!expected.delete(entry))fail();
+  }
   if(expected.size!==0)fail();
 }
 
@@ -239,11 +256,11 @@ export function readQueryCompilerOutputs(facts,sourceContext,coreBytes,options,c
   const cpuBatch=includeBatch?checkedBatch:undefined;
   const llvmBytes=llvmOutput?consumeQuery(llvmOutput==='ir'?'--llvm-ir':'--cpu-llvm',checkedBatch):undefined;
   const cpuLLVM=llvmBytes?decodeQueryCompilerText(llvmBytes,'llvm'):undefined;
-  if(cpuLLVM&&llvmOutput==='ir'){
-    checkQueryLlvmPair(cpuLLVM,checkedBatch,facts.program.target);
-    checkQueryLlvmEntries(cpuLLVM,facts);
+  if(cpuLLVM&&(llvmOutput==='ir'||llvmOutput==='dialect')){
+    if(llvmOutput==='ir')checkQueryLlvmPair(cpuLLVM,checkedBatch,facts.program.target);
+    else checkQueryLlvmDialect(cpuLLVM,checkedBatch,facts.program.target);
+    checkQueryLlvmEntries(cpuLLVM,facts,llvmOutput);
   }
-  if(cpuLLVM&&llvmOutput==='dialect')checkQueryLlvmDialect(cpuLLVM,checkedBatch,facts.program.target);
   const tmeta=includeTmeta?readSystemQueryTmeta(consumeQuery('--tmeta',checkedBatch),facts,sourceContext,checkedBatch):undefined;
   const llvmArtifact=llvmOutput==='ir'&&llvmBytes&&tmeta?own({
     llvmHash:sha256(llvmBytes),
