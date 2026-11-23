@@ -70,6 +70,9 @@ pub const Registry = struct {
         for (self.entries.items, 0..) |entry, i| if (std.mem.eql(u8, &entry.layout.type_id, &id)) return i;
         return null;
     }
+    pub fn matchesLayout(self: Registry, id: [32]u8, layout: element.Layout) bool {
+        return self.entries.items[self.index(id) orelse return false].layout.same(layout);
+    }
     fn collect(allocator: std.mem.Allocator, proposals: *std.ArrayList(Entry), layout: element.Layout, cell: ?cells.Layout) Error!void {
         for (proposals.items) |*entry| if (std.mem.eql(u8, &entry.layout.type_id, &layout.type_id)) {
             if (!entry.layout.same(layout)) return error.TypeMismatch;

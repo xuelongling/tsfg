@@ -466,9 +466,12 @@ pub const ManagedHeap = struct {
 
     pub fn readTypedValue(self: *ManagedHeap, handle: Handle, expected: CellLayout, layout: ArrayLayout, lifetime: Lifetime) Error!ArrayValue {
         const object = try self.resolve(handle); const value = try cells.cell(object, expected);
-        const bytes = try value.pack(self.allocator, layout);
-        errdefer self.allocator.free(bytes);
+        if (value.layout.kind != .value) return error.TypeMismatch;
+        for (value.initialized) |ready| if (!ready) return error.UninitializedField;
+        if (!self.owned().types.matchesLayout(value.layout.type_id, layout)) return error.TypeMismatch;
         const scope = try self.scopeFor(lifetime);
+        const bytes = try value.packValueBytes(self.allocator, layout);
+        errdefer self.allocator.free(bytes);
         return self.rootedValueWithBytes(layout, 0, bytes, object.edges, scope);
     }
 

@@ -170,7 +170,7 @@ test "viewed inline value copies keep the actual nonnullable value domain" {
     var wrong = actual; wrong.runtime_key[31] ^= 1;
     try std.testing.expectError(error.InvalidViewModule, module.view(wrong, view.target));
 }
-test "reading a packed scalar value succeeds with one owned byte buffer" {
+test "packed scalar reads validate layout and lifetime before allocating one owned buffer" {
     var module = try load("value");
     defer module.deinit();
     const actual = (try module.layouts.find(module.views[0].actual)).cell.?;
@@ -183,29 +183,29 @@ test "reading a packed scalar value succeeds with one owned byte buffer" {
     const offset = entry.layout.variants[0].children[0].offset;
     expected[offset] = 91;
 
-    // Measure canonical packing alone so the test does not depend on the
-    // number of allocations used to validate a layout.
-    var control = try @import("managed-cell.zig").Cell.init(allocator, layout);
-    defer control.deinit(allocator);
-    try control.unpack(allocator, entry.layout, .{ .bytes = expected, .references = &.{} });
-    var measured = std.testing.FailingAllocator.init(allocator, .{});
-    const control_bytes = try control.pack(measured.allocator(), entry.layout);
-    defer measured.allocator().free(control_bytes);
-    try std.testing.expectEqualSlices(u8, expected, control_bytes);
-
     var failing = std.testing.FailingAllocator.init(allocator, .{});
     var heap = managed.ManagedHeap.init(failing.allocator());
     defer heap.deinit() catch unreachable;
     try heap.installTypedLayouts(module.layouts);
     const cell = try heap.createTypedCell(layout, .persistent);
+    const uninitialized = try heap.createTypedCell(layout, .persistent);
     try scalar(&heap, cell, layout, 0, 91);
-    failing.fail_index = failing.alloc_index + measured.alloc_index;
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.ScopeRequired, heap.readTypedValue(cell, layout, entry.layout, .temporary));
+    try std.testing.expectError(error.TypeMismatch, heap.readTypedValue(cell, actual, entry.layout, .temporary));
+    var wrong_layout = entry.layout;
+    wrong_layout.byte_size += wrong_layout.alignment;
+    try std.testing.expectError(error.TypeMismatch, heap.readTypedValue(cell, layout, wrong_layout, .temporary));
+    try std.testing.expectError(error.UninitializedField, heap.readTypedValue(uninitialized, layout, entry.layout, .temporary));
+    try heap.release(uninitialized);
+    try std.testing.expectError(error.InvalidHandle, heap.readTypedValue(uninitialized, layout, entry.layout, .temporary));
+    try std.testing.expectError(error.OutOfMemory, heap.readTypedValue(cell, layout, entry.layout, .persistent));
+
+    failing.fail_index = failing.alloc_index + 1;
     var result = try heap.readTypedValue(cell, layout, entry.layout, .persistent);
     defer result.deinit(failing.allocator());
     try std.testing.expectEqualSlices(u8, expected, result.bytes);
     try std.testing.expectEqual(@as(usize, 0), result.references.len);
-    failing.fail_index = failing.alloc_index + measured.alloc_index;
-    try std.testing.expectError(error.ScopeRequired, heap.readTypedValue(cell, layout, entry.layout, .temporary));
 }
 test "view decoding and projected reads release every failed allocation before publication" {
     const raw = try bytes("offset"); defer allocator.free(raw);

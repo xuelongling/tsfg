@@ -117,11 +117,8 @@ pub const Cell = struct {
         const field = self.layout.fields[index];
         return self.bytes[field.offset..][0..field.layout.byte_size];
     }
-    pub fn pack(self: Cell, allocator: Allocator, expected: element.Layout) Error![]u8 {
-        if (self.layout.kind != .value) return error.TypeMismatch;
-        for (self.initialized) |ready| if (!ready) return error.UninitializedField;
-        const canonical = try self.layout.elementLayout(allocator); defer canonical.deinit(allocator);
-        if (!canonical.same(expected)) return error.TypeMismatch;
+    // The heap checks initialization and canonical layout before allocating.
+    pub fn packValueBytes(self: Cell, allocator: Allocator, expected: element.Layout) Error![]u8 {
         const bytes = try allocator.alloc(u8, expected.byte_size); @memset(bytes, 0);
         for (expected.variants[0].children, 0..) |child, index| {
             std.mem.writeInt(u16, bytes[child.tag_offset..][0..2], self.tags[index], .little);
