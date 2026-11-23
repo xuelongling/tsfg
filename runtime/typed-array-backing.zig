@@ -12,6 +12,7 @@ pub const Error = views.Error;
 pub const Array = struct { type_id: Id, element_type: Id, domain: finite.Domain, views: []Id };
 pub const Literal = codec.Active;
 pub const Value = opaque {};
+const CheckedArray = struct { row: Array, length: u32 };
 const Captured = struct { heap: *managed.ManagedHeap, input_identity: Id, actual_type: Id, source_view: Id, payload: access.Value };
 fn same(a: Id, b: Id) bool { return std.mem.eql(u8, &a, &b); }
 pub const Module = struct {
@@ -27,11 +28,11 @@ pub const Module = struct {
         if (writing and std.mem.startsWith(u8, entry.name, "ReadSpan<")) return error.ReadonlyField;
         return entry.layout.variants[0].references[0].type.array;
     }
-    fn checked(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, writing: bool) managed.Error!Array {
+    fn checked(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, writing: bool) managed.Error!CheckedArray {
         const row = try self.array(try heap.typedArrayIdentity(receiver));
-        _ = try heap.typedArrayLength(receiver, row.domain.layout);
+        const current_length = try heap.typedArrayLength(receiver, row.domain.layout);
         _ = try self.elementType(target, writing);
-        for (row.views) |id| if (same(id, target)) return row;
+        for (row.views) |id| if (same(id, target)) return .{ .row = row, .length = current_length };
         return error.MissingView;
     }
     pub fn create(self: Module, heap: *managed.ManagedHeap, id: Id, initial: []const Literal, lifetime: managed.Lifetime) managed.Error!managed.Handle {
@@ -47,30 +48,40 @@ pub const Module = struct {
         return heap.createBackedArray(self, id, inputs, lifetime);
     }
     pub fn write(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, index: u32, literal: Literal) managed.Error!void {
-        const row = try self.checked(heap, receiver, target, true);
+        const checked_array = try self.checked(heap, receiver, target, true);
         if (!try codec.assignment(self.authority, literal.type_id, try self.elementType(target, true))) return error.TypeMismatch;
-        try self.store(heap, receiver, row, index, literal);
+        if (index > checked_array.length) return error.IndexOutOfBounds;
+        try self.store(heap, receiver, checked_array.row, index, literal);
     }
     fn store(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, row: Array, index: u32, active: Literal) managed.Error!void {
         var encoded = try codec.pack(heap, self.authority, row.domain, active); defer encoded.deinit(heap.allocator);
         try heap.storeTypedArray(receiver, row.domain.layout, index, .{ .tag = encoded.tag, .bytes = encoded.bytes, .references = encoded.references });
     }
     pub fn resize(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, count: u32) managed.Error!void {
-        const row = try self.checked(heap, receiver, target, true); try heap.resizeTypedArray(receiver, row.domain.layout, count);
+        const checked_array = try self.checked(heap, receiver, target, true);
+        try heap.resizeTypedArray(receiver, checked_array.row.domain.layout, count);
     }
     pub fn length(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id) managed.Error!u32 {
-        const row = try self.checked(heap, receiver, target, false); return heap.typedArrayLength(receiver, row.domain.layout);
+        return (try self.checked(heap, receiver, target, false)).length;
     }
     pub fn read(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, index: u32, lifetime: managed.Lifetime) managed.Error!access.Value {
-        const row = try self.checked(heap, receiver, target, false);
+        const row = try self.readable(heap, receiver, target, index);
+        return readValue(heap, receiver, row, index, lifetime);
+    }
+    fn readable(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, index: u32) managed.Error!Array {
+        const checked_array = try self.checked(heap, receiver, target, false);
+        if (index >= checked_array.length) return error.IndexOutOfBounds;
+        return checked_array.row;
+    }
+    fn readValue(heap: *managed.ManagedHeap, receiver: managed.Handle, row: Array, index: u32, lifetime: managed.Lifetime) managed.Error!access.Value {
         const layout = try row.domain.layout.clone(heap.allocator); errdefer layout.deinit(heap.allocator);
         return .{ .layout = layout, .value = try heap.readTypedArray(receiver, row.domain.layout, index, lifetime) };
     }
     pub fn capture(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, index: u32) managed.Error!*Value {
-        const row = try self.checked(heap, receiver, target, false);
+        const row = try self.readable(heap, receiver, target, index);
         const result = try heap.allocator.create(Captured); errdefer heap.allocator.destroy(result);
         result.* = .{ .heap = heap, .input_identity = self.authority.input_identity, .actual_type = row.type_id, .source_view = target,
-            .payload = try self.read(heap, receiver, target, index, .persistent) };
+            .payload = try readValue(heap, receiver, row, index, .persistent) };
         return @ptrCast(result);
     }
     pub fn release(self: Module, value: *Value) managed.Error!void {
@@ -86,7 +97,8 @@ pub const Module = struct {
         var found = false; for (source.views) |id| { if (same(id, captured.source_view)) found = true; }
         if (!found or !captured.payload.layout.same(source.domain.layout)) return error.InvalidViewModule;
         if (!try codec.assignment(self.authority, try self.elementType(captured.source_view, false), try self.elementType(target, true))) return error.TypeMismatch;
-        try self.store(heap, receiver, destination, index, try codec.unpack(heap, source.domain, captured.payload.value));
+        if (index > destination.length) return error.IndexOutOfBounds;
+        try self.store(heap, receiver, destination.row, index, try codec.unpack(heap, source.domain, captured.payload.value));
     }
 };
 pub fn load(allocator: std.mem.Allocator, bytes: []const u8) Error!Module {

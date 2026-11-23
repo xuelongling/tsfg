@@ -61,6 +61,9 @@ creation, overwrite, append, snapshot or root reservation leaves existing values
 length, identity and published roots intact. Elements are initialized before
 length publication; no growth exposes uninitialized elements. Dense exact-tail
 append, gap refusal, checked reads and shrink-only resize retain Q12/Q13 behavior.
+After checking the view and any applicable static assignment, out-of-bounds
+reads, out-of-bounds snapshots, and writes beyond the tail return
+`IndexOutOfBounds` before allocating storage.
 Overwrite replaces active edges and shrink clears removed edges; snapshot roots
 outlive source overwrite/shrink, and moving GC keeps actual class TypeId/runtimeKey.
 
