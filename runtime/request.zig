@@ -46,14 +46,19 @@ pub fn acceptsArgumentCount(info: *const bytecode.ModuleInfo, count: usize) bool
     return true;
 }
 
+/// Check the state from TypedValue.presenceState against the logical slot mask.
+pub fn acceptsPresence(mask: u8, state: u8) bool {
+    return state == 0 or mask & state != 0;
+}
+
 /// Check logical caller values before any guest activation or state mutation.
 pub fn acceptsArguments(info: *const bytecode.ModuleInfo, arguments: []const TypedValue) bool {
     if (!acceptsArgumentCount(info, arguments.len)) return false;
     var physical: usize = 0;
     for (info.presence_masks[0..arguments.len], arguments) |presence, argument| {
         const state = argument.presenceState();
-        if (state == 0 and argument.typeCode() != info.parameter_types[physical]
-            or state == 1 and presence & 1 == 0 or state == 2 and presence & 2 == 0) return false;
+        if (!acceptsPresence(presence, state)
+            or state == 0 and argument.typeCode() != info.parameter_types[physical]) return false;
         if (argument == .string) _ = argument.string.owner.heap.stringLength(argument.string.handle) catch return false;
         physical += if (presence & 3 != 0) @as(usize, 2) else 1;
     }

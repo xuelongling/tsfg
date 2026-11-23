@@ -94,7 +94,8 @@ pub fn parseRequest(allocator: std.mem.Allocator, metadata: anytype, request: *c
             break;
         }
         const code = info.parameter_types[physical];
-        physical += if (info.presence_masks[index] & 3 != 0) @as(usize, 2) else 1;
+        const presence = info.presence_masks[index];
+        physical += if (presence & 3 != 0) @as(usize, 2) else 1;
         if (std.mem.eql(u8, type_value.string, "undefined") and value.* == .null) arguments[index] = .{ .undefined_value = {} } else if (std.mem.eql(u8, type_value.string, "null") and value.* == .null) arguments[index] = .{ .null_value = {} } else if (std.mem.eql(u8, type_value.string, "bool") and code == 2 and value.* == .bool) arguments[index] = .{ .boolean = value.bool } else if (std.mem.eql(u8, type_value.string, contract.typeName(code)) and contract.integerType(code) and value.* == .string) {
             var bits: u64 = undefined;
             var buffer: [32]u8 = undefined;
@@ -128,6 +129,10 @@ pub fn parseRequest(allocator: std.mem.Allocator, metadata: anytype, request: *c
                 valid = false; break;
             } };
         } else {
+            valid = false;
+            break;
+        }
+        if (!runtime.acceptsPresence(presence, arguments[index].presenceState())) {
             valid = false;
             break;
         }
