@@ -21,8 +21,6 @@ pub const Lease = struct {
         const heap = &source.owner.heap;
         const byte_length = try heap.stringByteLength(source.handle);
         if (byte_length > maximum) return error.OutputLimit;
-        var kept = try values.String.retain(source.owner, source.handle);
-        errdefer kept.deinit();
         // A surrogate's replacement has the same three-byte width. Valid pairs
         // retain four bytes, so canonical WTF-8 length is also the output bound.
         const bytes = try allocator.alloc(u8, byte_length);
@@ -43,6 +41,9 @@ pub const Lease = struct {
                 }
             }
         }
+        // The borrowed source stays live through conversion. Acquire the
+        // lease's independent root only once its output bytes are admissible.
+        const kept = try values.String.retain(source.owner, source.handle);
         self.* = .{ .allocator = allocator, .source = kept, .storage = bytes, .active = true, .binding = @intFromPtr(self),
             .token = .{ .owner = kept.handle.owner, .slot = kept.handle.slot, .generation = kept.handle.generation } };
         return self.token;

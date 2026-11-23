@@ -101,6 +101,51 @@ test "output budget rejects before reserving a root and leaves source valid" {
     try std.testing.expectEqual(@as(usize, 2), try source.owner.heap.stringLength(source.handle));
 }
 
+test "strict output rejects invalid UTF8 before reserving a root" {
+    const owner = try values.Owner.create(a);
+    defer owner.release();
+    const heap = &owner.heap;
+    const root = try heap.createString(&.{0xdc00}, .persistent);
+    defer heap.release(root) catch unreachable;
+    const source: values.String = .{ .owner = owner, .handle = root };
+    const managed = @import("managed-heap.zig");
+    var aliases: std.ArrayList(values.Handle) = .empty;
+    defer aliases.deinit(a);
+    defer for (aliases.items) |alias| heap.release(alias) catch unreachable;
+    const roots = try managed.testing.rootStats(heap);
+    try aliases.ensureTotalCapacity(a, roots.capacity - roots.count);
+    for (roots.count..roots.capacity) |_| aliases.appendAssumeCapacity(try heap.retain(source.handle, .persistent));
+
+    const full = try managed.testing.rootStats(heap);
+    const used = owner.budget.used;
+    const limit = owner.budget.limit;
+    owner.budget.limit = used;
+    var tracked = std.testing.FailingAllocator.init(a, .{});
+    const allocator = tracked.allocator();
+    var lease: output.Lease = .{};
+    defer lease.end() catch unreachable;
+
+    try std.testing.expectError(error.InvalidUtf8, lease.begin(allocator, source, .strict, 3));
+    try std.testing.expectError(error.OutOfMemory, lease.begin(allocator, source, .lossy, 3));
+    try std.testing.expectEqual(full, try managed.testing.rootStats(heap));
+    try std.testing.expectEqual(used, owner.budget.used);
+    try std.testing.expectEqual(tracked.allocated_bytes, tracked.freed_bytes);
+
+    owner.budget.limit = limit;
+    try std.testing.expectError(error.InvalidUtf8, lease.begin(allocator, source, .strict, 3));
+    try std.testing.expectEqual(full, try managed.testing.rootStats(heap));
+    try std.testing.expectEqual(used, owner.budget.used);
+    const token = try lease.begin(allocator, source, .lossy, 3);
+    for ([_]u8{ 0xef, 0xbf, 0xbd }, 0..) |byte, index| {
+        try std.testing.expectEqual(byte, try lease.readByte(token, index));
+    }
+    try lease.end();
+    try std.testing.expectError(error.ExpiredStringView, lease.byteLength(token));
+    try std.testing.expectEqual(@as(usize, 1), owner.references);
+    try std.testing.expectEqual(@as(usize, 1), try heap.stringLength(root));
+    try std.testing.expectEqual(tracked.allocated_bytes, tracked.freed_bytes);
+}
+
 test "in-place lease publication rejects copies before the first byte read" {
     var source = try owned(a, &.{0x41});
     var original: output.Lease = .{};
