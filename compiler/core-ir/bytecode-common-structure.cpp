@@ -158,15 +158,17 @@ bool CommonCold::graphStructure(){
   model.remaining=tables.remaining;
   for(size_t i=0;i<model.functions.size();++i){const auto &actual=model.functions[i];commonProgram::Function expected;
     std::map<std::pair<size_t,size_t>,std::string> paths;std::vector<size_t> incoming;
-    if(!readSourcePlan(check,field((*tables.abis)[i],"sourcePlan"),actual,*tables.sources,expected,paths,incoming)||
+    const auto &witness=field((*tables.abis)[i],"sourcePlan");
+    if(!readSourcePlan(check,witness,actual,*tables.sources,expected,paths,incoming)||
         !matchSourceCorrespondence(check,expected,paths,incoming,actual)){
       tables.remaining=model.remaining;return failure.message.empty()?false:reject(failure.message);
     }
     size_t comparisons=1;for(auto count=model.functions.size();count;count>>=1){if(!check.step()){tables.remaining=model.remaining;return reject(failure.message);}comparisons+=2;}
-    if(!check.step(3*comparisons*(actual.id.size()/64+1))){tables.remaining=model.remaining;return reject(failure.message);}
+    if(!check.step(4*comparisons*(actual.id.size()/64+1))){tables.remaining=model.remaining;return reject(failure.message);}
     const auto registers=model.sourceRegisters.find(actual.id);const auto views=model.registerViews.find(actual.id);
-    const auto sources=model.operationSources.find(actual.id);
+    const auto sources=model.operationSources.find(actual.id);const auto blocks=model.sourceBlocks.find(actual.id);
     if(!check.need(registers!=model.sourceRegisters.end()&&views!=model.registerViews.end()&&sources!=model.operationSources.end()&&
+        blocks!=model.sourceBlocks.end()&&blocks->second.size()==actual.blocks.size()&&
         registers->second.size()==actual.carriers.size()&&views->second.size()==actual.carriers.size(),"Common sourcePlan complete original view join")){
       tables.remaining=model.remaining;return reject(failure.message);
     }
@@ -175,17 +177,33 @@ bool CommonCold::graphStructure(){
         tables.remaining=model.remaining;return reject(failure.message);
       }
     }
-    const auto &wire=tables.program.functions[i];size_t operationCount=0;
-    for(size_t b=0;b<wire.blocks.size();++b)for(size_t n=0;n<wire.blocks[b].instructions.size();++n){const auto &op=wire.blocks[b].instructions[n];
-      const auto &path=*(*tables.sources)[op.sourceIndex].getAsObject()->getString("path");++operationCount;
-      size_t lookups=1;for(auto count=sources->second.size();count;count>>=1){if(!check.step()){tables.remaining=model.remaining;return reject(failure.message);}lookups+=2;}
-      if(!check.step(2*lookups+path.size()/32+1)){tables.remaining=model.remaining;return reject(failure.message);}
-      const auto mapped=sources->second.find({uint16_t(b),uint16_t(n)});
-      if(!check.need(mapped!=sources->second.end()&&llvm::StringRef(mapped->second)==path,"Common sourcePlan differs from original wire SourceIndex path")){
-        tables.remaining=model.remaining;return reject(failure.message);
+    const auto &wire=tables.program.functions[i];size_t operationCount=0;bool folded=false;
+    for(size_t b=0;b<wire.blocks.size();++b){
+      const auto &last=actual.blocks[b].operations.back();
+      if(!folded&&last.name=="cf.br"){
+        if(!check.step()){tables.remaining=model.remaining;return reject(failure.message);}
+        const auto &source=expected.blocks[blocks->second[b]].operations;
+        folded=source.back().name=="cf.cond_br";
+      }
+      for(size_t n=0;n<wire.blocks[b].instructions.size();++n){const auto &op=wire.blocks[b].instructions[n];
+        const auto &path=*(*tables.sources)[op.sourceIndex].getAsObject()->getString("path");++operationCount;
+        size_t lookups=1;for(auto count=sources->second.size();count;count>>=1){if(!check.step()){tables.remaining=model.remaining;return reject(failure.message);}lookups+=2;}
+        if(!check.step(2*lookups+path.size()/32+1)){tables.remaining=model.remaining;return reject(failure.message);}
+        const auto mapped=sources->second.find({uint16_t(b),uint16_t(n)});
+        if(!check.need(mapped!=sources->second.end()&&llvm::StringRef(mapped->second)==path,"Common sourcePlan differs from original wire SourceIndex path")){
+          tables.remaining=model.remaining;return reject(failure.message);
+        }
       }
     }
     if(!check.need(sources->second.size()==operationCount,"Common sourcePlan complete operation path join")){tables.remaining=model.remaining;return reject(failure.message);}
+    // Only fully joined logical graphs may supply a lexical proof edge.
+    if(folded){
+      size_t lookups=1;for(auto count=model.sourcePlans.size();count;count>>=1){if(!check.step()){tables.remaining=model.remaining;return reject(failure.message);}lookups+=2;}
+      if(!check.step((lookups+1)*(actual.id.size()/64+1))||!returnOriginMetadataCost(model,witness,failure)){
+        tables.remaining=model.remaining;return reject(failure.message);
+      }
+      model.sourcePlans.emplace(actual.id,witness);
+    }
   }
   tables.remaining=model.remaining;
   return true;

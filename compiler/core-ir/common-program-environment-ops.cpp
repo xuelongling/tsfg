@@ -2,6 +2,56 @@
 #include "common-program-plan.h"
 #include "environment-contracts.h"
 namespace tsfg::commonProgram {
+namespace {
+bool restoreLiteralInitializationEdges(ActualCheck &check,const Function &fn,
+    const std::vector<size_t> &branches,environmentContracts::InitializationGraph &graph){
+  for(const auto size:{check.p.sourcePlans.size(),check.p.sourceBlocks.size()}){
+    size_t comparisons=1;for(auto count=size;count;count>>=1){if(!check.step())return false;comparisons+=2;}
+    if(!check.step(comparisons*(fn.id.size()/64+1)))return false;
+  }
+  const auto plan=check.p.sourcePlans.find(fn.id);
+  if(plan==check.p.sourcePlans.end())return true;
+  const auto sources=check.p.sourceBlocks.find(fn.id);
+  const auto &logical=items(field(plan->second,"blocks"));
+  if(!check.need(sources!=check.p.sourceBlocks.end()&&sources->second.size()==fn.blocks.size()&&!logical.empty(),
+      "initialization Source block correspondence is incomplete")||
+     !check.step(3*fn.blocks.size()+logical.size()))return false;
+  std::vector<bool> continuations(fn.blocks.size());
+  for(const auto &block:fn.blocks){
+    const auto &end=block.operations.back();
+    if(end.name=="numeric_use")continuations[end.successors.front()]=true;
+  }
+  std::vector<size_t> physical(logical.size(),SIZE_MAX);
+  for(size_t block=0;block<fn.blocks.size();++block){
+    if(continuations[block])continue;
+    const auto source=sources->second[block];
+    if(!check.need(source<physical.size()&&physical[source]==SIZE_MAX,"initialization Source block mapping differs"))return false;
+    physical[source]=block;
+  }
+  // The matched logical conditional keeps its original lexical checks. Only
+  // this verification graph sees the dropped edge; actual control is unchanged.
+  for(const auto block:branches){
+    if(!check.step(4))return false;
+    const auto source=sources->second[block];
+    if(!check.need(source<logical.size(),"initialization Source branch is unavailable"))return false;
+    const auto &operations=items(field(logical[source],"operations"));
+    if(!check.need(!operations.empty(),"initialization Source branch is empty"))return false;
+    const auto &original=operations.back();
+    if(field(original,"name").getAsString()!="cf.cond_br")continue;
+    const auto &targets=items(field(original,"successors"));
+    auto &successors=graph.blocks[block].successors;
+    if(!check.need(targets.size()==2&&successors.size()==1,"initialization literal edge shape differs"))return false;
+    const auto yes=targets[0].getAsInteger(),no=targets[1].getAsInteger();
+    if(!check.need(yes&&no&&*yes>=0&&*no>=0&&uint64_t(*yes)<physical.size()&&uint64_t(*no)<physical.size(),
+        "initialization literal Source targets differ"))return false;
+    const auto first=physical[*yes],second=physical[*no];
+    if(!check.need(first!=SIZE_MAX&&second!=SIZE_MAX&&first!=second&&
+        (successors.front()==first||successors.front()==second),"initialization literal edge is not Source-owned"))return false;
+    successors.push_back(successors.front()==first?second:first);
+  }
+  return true;
+}
+}
 ActualValue ActualCheck::environmentSlot(const ActualValue &selected,const std::string &start,const std::string &owner,
     const std::string &key,const ActualHeap &heap,bool &addressComplete){
   addressComplete=true;std::vector<std::string> path;std::set<std::string> visited;auto layout=start;
@@ -115,10 +165,16 @@ bool ActualCheck::environmentGraph(const Function &fn){
     graph.blocks[block].events.push_back({environmentContracts::EventKind::Observe,binding});return true;
   };
   size_t allocations=0;
+  std::vector<size_t> literalBranches;
   for(size_t b=0;b<fn.blocks.size();++b){
     if(!step())return false;auto &target=graph.blocks[b];
-    for(auto to:fn.blocks[b].operations.back().successors){if(!step())return false;target.successors.push_back(to);}
-    for(const auto &op:fn.blocks[b].operations){
+    const auto &operations=fn.blocks[b].operations;
+    const auto &end=operations.back();
+    for(auto to:end.successors){if(!step())return false;target.successors.push_back(to);}
+    if(end.name=="cf.br"&&operations.size()>=2&&operations[operations.size()-2].name=="boolean"){
+      if(!step())return false;literalBranches.push_back(b);
+    }
+    for(const auto &op:operations){
       if(!step())return false;const auto layout=string(field(op.properties,"layout"));
       const auto result=op.result!=noRegister;
       if(op.name=="env_alloc"){
@@ -158,6 +214,7 @@ bool ActualCheck::environmentGraph(const Function &fn){
     }
   }
   if(!need(allocations==(own.empty()?0:1),"owned activation environment allocation was omitted"))return false;
+  if(!literalBranches.empty()&&!restoreLiteralInitializationEdges(*this,fn,literalBranches,graph))return false;
   environmentContracts::Failure failure;
   if(environmentContracts::initialize(graph,[&](size_t n){return step(n);},failure))return true;
   if(failure.block<fn.blocks.size()){e.path=fn.path;e.range=fn.range;}
