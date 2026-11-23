@@ -415,6 +415,11 @@ pub const ManagedHeap = struct {
         if (object.payload != .cell) return error.TypeMismatch;
         return object.payload.cell.layout.clone(self.allocator);
     }
+    pub fn typedCellIdentity(self: *ManagedHeap, handle: Handle) Error![32]u8 {
+        const object = try self.resolve(handle);
+        if (object.payload != .cell) return error.TypeMismatch;
+        return object.payload.cell.layout.type_id;
+    }
 
     pub fn installTypedLayouts(self: *ManagedHeap, module: @import("typed-layout-canonical.zig").Module) Error!void {
         try self.check();

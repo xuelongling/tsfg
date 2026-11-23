@@ -67,8 +67,7 @@ pub fn pack(heap: *managed.ManagedHeap, authority: views.Module, domain: finite.
     } else if (layout.variants.len == 1) {
         tag = 0;
         if (references.len != 1 or active.input.references[0] == null) return error.TypeMismatch;
-        const header = try heap.copyTypedCellLayout(active.input.references[0].?); defer header.deinit(heap.allocator);
-        if (!same(header.type_id, active.type_id)) return error.TypeMismatch;
+        if (!same(try heap.typedCellIdentity(active.input.references[0].?), active.type_id)) return error.TypeMismatch;
         @memcpy(references, active.input.references);
     } else if (layout.variants[index].kind == .value) {
         const child = layout.variants[index].children[0];
@@ -83,9 +82,9 @@ pub fn unpack(heap: *managed.ManagedHeap, domain: finite.Domain, value: element.
     if (domain.layout.variants.len == 1) {
         if (value.references.len != 1) return error.InvalidArrayElement;
         const handle = value.references[0] orelse return error.InvalidArrayElement;
-        const header = try heap.copyTypedCellLayout(handle); defer header.deinit(heap.allocator);
-        if (memberIndex(domain.members, header.type_id) == null) return error.InvalidArrayElement;
-        return .{ .type_id = header.type_id, .input = .{ .bytes = &.{}, .references = value.references } };
+        const type_id = try heap.typedCellIdentity(handle);
+        if (memberIndex(domain.members, type_id) == null) return error.InvalidArrayElement;
+        return .{ .type_id = type_id, .input = .{ .bytes = &.{}, .references = value.references } };
     }
     const variant = try domain.layout.selectVariant(value.tag);
     if (value.tag >= domain.members.len) return error.InvalidArrayElement;

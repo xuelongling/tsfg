@@ -45,25 +45,39 @@ test "all-reference backing decodes only concrete members of its own domain" {
         if (count == ids.len) break;
     }
     try std.testing.expectEqual(ids.len, count);
+    for (ids, 0..) |id, index| {
+        if ((try module.authority.layouts.find(id)).cell.?.fields.len == 0) continue;
+        std.mem.swap([32]u8, &ids[0], &ids[index]);
+        break;
+    } else return error.MissingPopulatedReferenceFixture;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const source = try referenceDomain(arena.allocator(), module, .{ ids[0], ids[1] });
     const other = try referenceDomain(arena.allocator(), module, .{ ids[1], ids[2] });
-    var heap = managed.ManagedHeap.init(allocator);
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    const heap_allocator = failing.allocator();
+    var heap = managed.ManagedHeap.init(heap_allocator);
     defer heap.deinit() catch unreachable;
     try heap.installTypedLayouts(module.authority.layouts);
     const cell = (try module.authority.layouts.find(ids[0])).cell.?;
     const handle = try heap.createTypedCell(cell, .persistent);
     defer heap.release(handle) catch unreachable;
-    var encoded = try codec.pack(&heap, module.authority, source, .{
+    const input: codec.Active = .{
         .type_id = ids[0], .input = .{ .bytes = &.{}, .references = &.{handle} },
-    });
-    defer encoded.deinit(allocator);
+    };
+    var encoded = try codec.pack(&heap, module.authority, source, input);
+    defer encoded.deinit(heap_allocator);
     try heap.collect();
+    failing.fail_index = failing.alloc_index;
     const active = try codec.unpack(&heap, source, encoded);
     try std.testing.expectEqual(ids[0], active.type_id);
     try std.testing.expect(try heap.sameObject(handle, active.input.references[0].?));
     try std.testing.expectError(error.InvalidArrayElement, codec.unpack(&heap, other, encoded));
+    // A packed reference owns one reference-slot allocation and no payload bytes.
+    failing.fail_index = failing.alloc_index + 1;
+    var repacked = try codec.pack(&heap, module.authority, source, input);
+    defer repacked.deinit(heap_allocator);
+    try std.testing.expectEqual(handle, repacked.references[0].?);
 }
 
 test "Source field value copy uses static i32 provenance while retaining active undefined" {
