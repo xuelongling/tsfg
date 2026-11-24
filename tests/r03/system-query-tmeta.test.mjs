@@ -7,7 +7,7 @@ import {spawnSync} from 'node:child_process';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 import {coreQuote} from '../../compiler/mlir-strings.mjs';
 import {readSystemQueryFacts,systemQueryRequestContext} from '../../compiler/system-query-facts.mjs';
-import {emitSystemQueryCore} from '../../compiler/system-query-core.mjs';
+import {emitSystemQueryCore,escapeQueryCompilerBytes} from '../../compiler/system-query-core.mjs';
 import {readSystemQueryTmeta,queryTmetaSchema} from '../../compiler/system-query-tmeta.mjs';
 import {compileSystemQuery,readQueryCompilerOutputs} from '../../compiler/pipeline.mjs';
 
@@ -335,7 +335,10 @@ test('Query pipeline pairs the retained LLVM IR and metadata through one batch',
 
 const queryFixtures=new URL('../../runtime/jobs/testdata/',import.meta.url);
 function retainedQuery(name){
-  const metadata=readFileSync(new URL('query-tmeta-'+name+'.tmeta',queryFixtures));
+  return readRetainedQuery(readFileSync(new URL('query-tmeta-'+name+'.tmeta',queryFixtures)));
+}
+/** @param {Buffer} metadata */
+function readRetainedQuery(metadata){
   const payload=JSON.parse(JSON.parse(metadata.toString('utf8')).payload);
   const packet=Buffer.from(payload.sourcePacket),request=Buffer.from(payload.sourceRequest);
   const context=systemQueryRequestContext(packet,request),facts=readSystemQueryFacts(packet,context);
@@ -345,6 +348,38 @@ function retainedQuery(name){
     byte==='\\'?'\\':String.fromCharCode(Number.parseInt(byte,16))),'latin1');
   return {metadata,payload,core,facts,context};
 }
+
+test('C61 Query Core preserves its exact Source facts and request',async t=>{
+  const original=readRetainedQuery(readFileSync(new URL('query-effects-multi.tmeta',queryFixtures)));
+  const other=retainedQuery('i32-copy');
+  assert.equal(sha256(original.core),'sha256:89ea394feac3da6afd835dc2b915d5e158eac425d9571083086bab37f4a89563');
+  const {facts,context,core,payload}=original;
+  const text=core.toString('utf8');
+  const accepted=readQueryCompilerOutputs(facts,context,core,{},()=>assert.fail('Core-only output has no next stage'));
+  assert.deepEqual(Buffer.from(accepted.core),core);
+  const proof=(field,value)=>field+' = "'+escapeQueryCompilerBytes(Buffer.from(value.slice(0,-1)))+'"';
+  for(const [field,source,foreign] of [
+    ['tsfg.query_facts',payload.sourcePacket,other.payload.sourcePacket],
+    ['tsfg.query_request',payload.sourceRequest,other.payload.sourceRequest],
+  ]){
+    const originalField=proof(field,source);
+    assert.ok(text.includes(originalField+', '));
+    for(const [kind,changed] of [
+      ['missing',text.replace(originalField+', ','')],
+      ['foreign',text.replace(originalField,()=>proof(field,foreign))],
+    ])await t.test('reject '+kind+' '+field,()=>{
+      assert.notEqual(changed,text);
+      for(const options of [{},{effects:true,cpuBatch:true,tmeta:true}]){
+        const calls=[];
+        assert.throws(()=>readQueryCompilerOutputs(facts,context,Buffer.from(changed),options,command=>{
+          calls.push(command);
+          return Buffer.from(payload.batch);
+        }),/r10-system-query-core: checked Source receipt differs/);
+        assert.deepEqual(calls,[]);
+      }
+    });
+  }
+});
 
 test('Query standalone batch corresponds to the verified input Core',async t=>{
   const copy=retainedQuery('i32-copy'),compound=retainedQuery('i32-compound');

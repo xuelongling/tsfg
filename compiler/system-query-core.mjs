@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Lower immutable owned Query facts, never upstream AST or JS evaluation.
-import {printSystemQueryFacts} from './system-query-facts.mjs';
+import {printSystemQueryFacts,readSystemQuerySourceReceipt} from './system-query-facts.mjs';
 import {commonTextBudget} from './common-program-budget.mjs';
 import {functionId,signatureId} from './module-callable-common.mjs';
 import {canonical,sha256,scalarTypeIds} from './identity.mjs';
@@ -123,33 +123,53 @@ export function escapeQueryCompilerBytes(bytes){
     byte==='\\'?'\\\\':'\\'+byte.charCodeAt(0).toString(16).toUpperCase().padStart(2,'0'));
 }
 
+/** Check the current owned Source in the canonical Query Core module dictionary.
+ * @param {string} core @param {import('./system-query-facts.mjs').SystemQueryFacts} facts @param {unknown} context
+ */
+export function checkQueryCoreSource(core,facts,context){
+  const {packetText,requestText}=readSystemQuerySourceReceipt(facts,context);
+  checkQueryModuleFields(core,new Map([
+    ['tsfg.query_facts','"'+escapeQueryCompilerBytes(Buffer.from(packetText.slice(0,-1)))+'"'],
+    ['tsfg.query_request','"'+escapeQueryCompilerBytes(Buffer.from(requestText.slice(0,-1)))+'"'],
+  ]),new Map([['tsfg.query_version','i32'],['tsfg_core.source_length','i64']]),'r10-system-query-core: checked Source receipt differs');
+}
+
 /** Check the original bound Core in the canonical batch's final module attribute dictionary.
  * @param {string} batch @param {Buffer} core @param {string} inputIdentity
  */
 export function checkQueryBatchSource(batch,core,inputIdentity){
-  const failure=()=>{throw new TypeError('r10-system-query-batch: checked input identity or Core differs');};
-  const end=batch.trimEnd().length,closing=batch.slice(batch.lastIndexOf('\n',end-1)+1,end);
+  checkQueryModuleFields(batch,new Map([
+    ['tsfg.cpu_batch_version','1 : i32'],
+    ['tsfg.cpu_batch_source','"'+escapeQueryCompilerBytes(core)+'"'],
+    ['tsfg_core.input_identity','"'+inputIdentity+'"'],
+  ]),new Map([['tsfg.cpu_batch_version','i32']]),'r10-system-query-batch: checked input identity or Core differs');
+}
+
+/** @param {string} text @param {ReadonlyMap<string,string>} expected @param {ReadonlyMap<string,string>} integers @param {string} diagnostic */
+function checkQueryModuleFields(text,expected,integers,diagnostic){
+  const failure=()=>{throw new TypeError(diagnostic);};
+  const end=text.trimEnd().length,closing=text.slice(text.lastIndexOf('\n',end-1)+1,end);
   const suffix='} : () -> ()';
   // Nested operation dictionaries are indented. This printer puts the module
   // dictionary on its final unindented line and quotes embedded newlines.
-  if(!batch.startsWith('"builtin.module"() ({\n')||!closing.startsWith('}) {')||!closing.endsWith(suffix))failure();
+  if(!text.startsWith('"builtin.module"() ({\n')||!closing.startsWith('}) {')||!closing.endsWith(suffix))failure();
   const fields=closing.slice(4,-suffix.length);
-  const name=/([a-z_][a-z_0-9.]*) = /y,versionValue='1 : i32';
+  const name=/([a-z_][a-z_0-9.]*) = /y,number=/[0-9]+ : (i32|i64)/y;
   const special=/["\\]/g,escape=/(?:\\|[0-9A-F]{2})/y;
-  let offset=0,source,identity,version=false;
+  const remaining=new Set(expected.keys());
+  let offset=0;
   while(offset<fields.length){
     name.lastIndex=offset;
     const field=name.exec(fields);
     if(!field)failure();
-    offset=name.lastIndex;
-    if(field[1]==='tsfg.cpu_batch_version'){
-      if(version||!fields.startsWith(versionValue,offset))failure();
-      version=true;
-      offset+=versionValue.length;
+    const key=field[1],start=name.lastIndex,type=integers.get(key);
+    if(type!==undefined){
+      number.lastIndex=start;
+      if(number.exec(fields)?.[1]!==type)failure();
+      offset=number.lastIndex;
     }else{
-      if(fields[offset]!=='"')failure();
-      const start=offset+1;
-      special.lastIndex=start;
+      if(fields[start]!=='"')failure();
+      special.lastIndex=start+1;
       let token=special.exec(fields);
       while(token?.[0]==='\\'){
         escape.lastIndex=special.lastIndex;
@@ -159,19 +179,13 @@ export function checkQueryBatchSource(batch,core,inputIdentity){
       }
       if(!token)failure();
       offset=special.lastIndex;
-      if(field[1]==='tsfg.cpu_batch_source'){
-        if(source!==undefined)failure();
-        source=fields.slice(start,offset-1);
-      }else if(field[1]==='tsfg_core.input_identity'){
-        if(identity!==undefined)failure();
-        identity=fields.slice(start,offset-1);
-      }
     }
+    if(expected.has(key)&&(!remaining.delete(key)||fields.slice(start,offset)!==expected.get(key)))failure();
     if(offset===fields.length)break;
     if(fields.slice(offset,offset+2)!==', '||offset+2===fields.length)failure();
     offset+=2;
   }
-  if(!version||identity!==inputIdentity||source===undefined||source.length<core.length||source!==escapeQueryCompilerBytes(core))failure();
+  if(remaining.size)failure();
 }
 
 /** Check the fixed generic printer's top-level LLVM dialect dictionary.
