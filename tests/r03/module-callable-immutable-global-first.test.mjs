@@ -26,6 +26,78 @@ function jcs(value) {
 const hash=value=>'sha256:'+createHash('sha256').update(value).digest('hex');
 /** @param {any} value */
 const bytes=value=>Buffer.from(jcs(value)+'\n');
+async function groupedInitializers(constSeparator = ',', secondWritable = false) {
+  // Derive new source and owned facts from the archived alias capture.
+  const actual=JSON.parse(await readFile(new URL('./module-callable-immutable-global-source-actual.json',import.meta.url),'utf8'));
+  const request=JSON.parse(actual.requestBytes), packet=JSON.parse(actual.packetBytes);
+  const file=request.input.files[0], payload=packet.payload;
+  const {symbols,modules:[module]}=payload.facts;
+  /** @type {Array<[string,string,string,boolean,boolean]>} */
+  const declarations=[
+    ['const',' ','first',true,false],
+    [constSeparator,' /* readonly */ ','second',false,secondWritable],
+    [';\nlet',' ','third',false,true],
+    [',',' // writable\n  ','fourth',true,true]
+  ];
+  for (const [prefix,trivia,name,value,writable] of declarations) {
+    file.content+=prefix;
+    const start=file.content.length;
+    file.content+=trivia+name;
+    const symbol={id:'s'+(symbols.length+1),bindingKind:'source',kind:'global',name,
+      range:{start,end:file.content.length},sourcePath:file.path,type:'bool',writable};
+    file.content+=': bool =';
+    const valueStart=file.content.length;
+    file.content+=' '+value;
+    const end=file.content.length;
+    symbols.push(symbol);
+    module.globals.push(symbol.id);
+    module.initialization.push({kind:'initialize',range:{start,end},symbol,
+      initializer:{kind:'boolean',boolean:value,range:{start:valueStart,end},type:'bool'}});
+  }
+  file.content+=';\n';
+  const digest=hash(file.content);
+  file.sha256=digest.slice(7);
+  Object.assign(payload.files[0],{digest,byteLength:Buffer.byteLength(file.content),length:file.content.length});
+  payload.inputIdentity=hash('tsfg.module-callable-facts.input.v2\0'+jcs(request.input));
+  packet.requestId=hash('tsfg.module-callable-facts.request.v2\0'+jcs(request));
+  const {packageId,...body}=packet;
+  const requestBytes=bytes(request);
+  const packetBytes=bytes({...body,packageId:hash('tsfg.module-callable-facts.package.v2\0'+jcs(body))});
+  return importCapturedFrontendResponse(requestBytes,packetBytes,{...actual.sourceOrigin,
+    requestSha256:hash(requestBytes),responseSha256:hash(packetBytes)});
+}
+
+test('grouped module globals retain lexical initialization, mutability and Core stores',async()=>{
+  const imported=await groupedInitializers();
+  assert.equal(imported.status,'ok',jcs(imported));
+  const built=buildHir(imported.snapshot);
+  assert.equal(built.status,'ok',jcs(built));
+  const hir=readHir(Buffer.from(printHir(built.hir)));
+  const initializer=hir.functions.find(fn=>fn.kind==='module-initialization');
+  const globals=new Map(hir.globals.map(global=>[global.id,global]));
+  const expected=[['shared',false,true],['first',true,false],['second',false,false],
+    ['third',false,true],['fourth',true,true]];
+  assert.deepEqual(initializer.body.map(statement=>[
+    globals.get(statement.global).name,statement.value.value,globals.get(statement.global).writable
+  ]),expected);
+  assert.deepEqual(hir.closure.initialization,[initializer.id]);
+  assert.equal(hir.modules[0].initializer,initializer.id);
+  const core=moduleCallableCoreView(hir);
+  assert.deepEqual(core.moduleState.closure.initialization,[initializer.id]);
+  assert.deepEqual(core.functions.find(fn=>fn.id===initializer.id).body,initializer.body);
+  const stores=[...lowerHir(hir).matchAll(/"tsfg_core\.global_store"\([^\n]+\{global = (\d+) : i64, initialize = true/g)];
+  assert.deepEqual(stores.map(match=>core.moduleState.globals[Number(match[1])].name),expected.map(row=>row[0]));
+});
+
+test('grouped module globals reject a broken declaration boundary or writability',async()=>{
+  /** @type {Array<[string,boolean]>} */
+  const cases=[[';',false],[',;',false],[',',true]];
+  for (const [separator,writable] of cases) {
+    const result=await groupedInitializers(separator,writable);
+    assert.equal(result.status,'error');
+    assert.equal(result.diagnostics[0].code,'r03-module-callable-source');
+  }
+});
 /** @param {any} value */
 const clone=value=>structuredClone(value);
 /** @param {any} value */
