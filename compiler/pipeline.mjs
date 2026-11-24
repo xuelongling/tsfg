@@ -424,6 +424,7 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   // Only scalar packets use the first function descriptor as the default.
   const scalar = !common && family === undefined && hir.modules === undefined;
   const packetDefaultRoot = generic ? hir.closure.roots[0] : scalar ? hir.functions[0].id : undefined;
+  const packetFunctionCount = generic ? hir.closure.functions.length : undefined;
   const prefix = common ? ['--common-program'] : [];
   const core = decodeCompilerText(consume(executable, [...prefix, optimize ? "--optimize" : "--canonicalize"], lowered),"r03-core-output");
   if(common||ordinary||generic||exception||nullable||closure||optional||reference){
@@ -431,15 +432,15 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
     if(common)requireCommonCoreSelection(lowered,core.slice(moduleClose).trimEnd());
     if(generic)requireCheckedGenericFunctions(core,moduleClose,packetDefaultRoot,hir.closure.functions);
   }
-  return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot };
+  return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot, packetFunctionCount };
 }
 
 async function produceBytecode(buildCore) {
   try {
-    const { hir, executable, prefix, common, core, packetInput, packetDefaultRoot } = await buildCore();
+    const { hir, executable, prefix, common, core, packetInput, packetDefaultRoot, packetFunctionCount } = await buildCore();
     const bytecode = consume(executable, [...prefix, "--emit-bytecode"], core);
     if (common) verifyCommonProducedPacket(bytecode, packetInput);
-    else verifyProducedPacket(bytecode, packetInput, packetDefaultRoot);
+    else verifyProducedPacket(bytecode, packetInput, packetDefaultRoot, packetFunctionCount);
     return { status: "ok", hir, core, bytecode };
   } catch (error) {
     return { status: "tool-error", code: "r03-d-consumer", message: error.message };

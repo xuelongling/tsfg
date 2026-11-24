@@ -341,6 +341,20 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     assert.equal(accepted.status,'ok');
     assert.deepEqual(Buffer.from(accepted.core,'utf8'),stdout);
 
+    await sub.test('bytecode preserves the concrete function count',async()=>{
+      const {hir:scalar}=stringCases()[0];
+      const ids=[root,...checked.closure.functions.filter(id=>id!==root)];
+      const packetFor=functions=>expectedStringPacket({...scalar,inputIdentity:checked.inputIdentity,
+        functions:functions.map(id=>({...scalar.functions[0],id}))});
+      packetStdout=packetFor(ids);
+      const matched=await compileOwnedHir(checked,options);
+      assert.equal(matched.status,'ok');
+      assert.deepEqual(matched.bytecode,packetStdout);
+      packetStdout=packetFor(ids.slice(0,-1));
+      assert.deepEqual(await compileOwnedHir(checked,options),{status:'tool-error',code:'r03-d-consumer',
+        message:'r04-producer-function-count: scalar function count differs from the checked HIR'});
+    });
+
     await sub.test('missing, duplicate or foreign definitions reject before bytecode',async()=>{
       const wrongInventory={status:'tool-error',code:'r03-d-consumer',
         message:'r03-core-output: generic function inventory differs from the checked HIR'};
