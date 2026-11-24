@@ -73,8 +73,8 @@ pub fn parseRequest(allocator: std.mem.Allocator, metadata: anytype, request: *c
     }
     var valid = request.arguments.len <= 64 and runtime.acceptsArgumentCount(info, request.arguments.len);
     const arguments: []runtime.TypedValue = if (valid) parsed.argument_storage[0..request.arguments.len] else &.{};
-    // Check the whole typed tuple before acquiring request-budgeted String roots.
-    // Keep argument_count at the materialized prefix for failure cleanup.
+    // Check the typed tuple without acquiring String roots. Keep argument_count
+    // at the materialized prefix for failure cleanup.
     var physical: usize = 0;
     var first_string: ?usize = null;
     if (valid) for (request.arguments, 0..) |original, index| {
@@ -135,21 +135,10 @@ pub fn parseRequest(allocator: std.mem.Allocator, metadata: anytype, request: *c
         }
         if (first_string == null) parsed.argument_count += 1;
     };
-    if (valid) if (first_string) |start| for (request.arguments[start..], start..) |argument, index| {
-        if (std.mem.eql(u8, argument.object.getPtr("type").?.string, "string")) {
-            const value = argument.object.getPtr("value").?.*;
-            arguments[index] = .{ .string = string_arguments.readValidated(allocator, &parsed.argument_owner, value.array.items, request.memoryBytes) catch |err| {
-                if (err == error.OutOfMemory or err == error.IdentityExhausted) {
-                    result_out.* = .{ .failed = .{ .code = "r05-execution-abort", .category = "execution-abort", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } };
-                    return false;
-                }
-                valid = false; break;
-            } };
-        }
-        parsed.argument_count += 1;
-    };
-    if (valid) valid = @import("request.zig").acceptsArguments(info,arguments);
-    if (!valid) { result_out.* = .{ .failed = .{ .code = "r05-request-arguments", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } }; return false; }
+    const argument_failure: runtime.RequestOutcome = .{ .failed = .{
+        .code = "r05-request-arguments", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel,
+    } };
+    if (!valid) { result_out.* = argument_failure; return false; }
     const capabilities = &parsed.capabilities;
     var capabilities_valid = request.capabilities.len <= 128;
     if (capabilities_valid) for (request.capabilities, 0..) |value, index| {
@@ -159,6 +148,20 @@ pub fn parseRequest(allocator: std.mem.Allocator, metadata: anytype, request: *c
     if (!capabilities_valid) { result_out.* = .{ .failed = .{ .code = "r05-request-capability", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } }; return false; }
     const init_only = std.mem.eql(u8, request.kind, "module-initialization");
     if (!init_only and !std.mem.eql(u8, request.kind, "function")) { result_out.* = .{ .failed = .{ .code = "r05-request-kind", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } }; return false; }
+    // Only a fully checked request may allocate its String arguments.
+    if (first_string) |start| for (request.arguments[start..], start..) |argument, index| {
+        if (std.mem.eql(u8, argument.object.getPtr("type").?.string, "string")) {
+            const value = argument.object.getPtr("value").?.*;
+            arguments[index] = .{ .string = string_arguments.readValidated(allocator, &parsed.argument_owner, value.array.items, request.memoryBytes) catch |err| {
+                result_out.* = if (err == error.OutOfMemory or err == error.IdentityExhausted)
+                    .{ .failed = .{ .code = "r05-execution-abort", .category = "execution-abort", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } }
+                else argument_failure;
+                return false;
+            } };
+        }
+        parsed.argument_count += 1;
+    };
+    if (!runtime.acceptsArguments(info, arguments)) { result_out.* = argument_failure; return false; }
     const limits: runtime.RequestLimits = .{ .memory_bytes = @intCast(request.memoryBytes), .instruction_budget = request.instructionBudget, .semantic_fuel = request.semanticFuel, .depth = request.depth, .host_time_ns = request.hostTimeNanos };
     parsed.function_id = function_id;
     parsed.arguments = arguments;
