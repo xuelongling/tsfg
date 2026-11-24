@@ -114,6 +114,34 @@ test "backed Array checks bounds before allocating reads, snapshots and writes" 
     try module.copy(&heap, object, row.type_id, 1, captured);
     try std.testing.expectEqual(@as(u32, 2), try module.length(&heap, object, row.type_id));
 }
+test "backed Array temporary read checks scope before allocation" {
+    const raw = try bytes(); defer allocator.free(raw);
+    var module = try backing.load(allocator, raw); defer module.deinit();
+    const row = module.arrays[0];
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    var heap = managed.ManagedHeap.init(failing.allocator()); defer heap.deinit() catch unreachable;
+    try heap.installTypedLayouts(module.authority.layouts);
+    const payload = [_]u8{ 47, 0, 0, 0 };
+    const object = try module.create(&heap, row.type_id, &.{.{
+        .type_id = row.element_type, .input = .{ .bytes = &payload, .references = &.{} },
+    }}, .persistent);
+    const roots = (try managed.testing.rootStats(&heap)).count;
+    failing.fail_index = failing.alloc_index;
+    failing.resize_fail_index = failing.resize_index;
+    try std.testing.expectError(error.IndexOutOfBounds, module.read(&heap, object, row.type_id, 1, .temporary));
+    try std.testing.expectError(error.ScopeRequired, module.read(&heap, object, row.type_id, 0, .temporary));
+    try std.testing.expectError(error.OutOfMemory, module.read(&heap, object, row.type_id, 0, .persistent));
+    try std.testing.expectEqual(roots, (try managed.testing.rootStats(&heap)).count);
+    failing.fail_index = std.math.maxInt(usize);
+    failing.resize_fail_index = std.math.maxInt(usize);
+    const scope = try heap.beginScope(); defer heap.endScope(scope) catch unreachable;
+    var observed = try module.read(&heap, object, row.type_id, 0, .temporary); defer observed.deinit(heap.allocator);
+    const codec = @import("typed-backing-value.zig");
+    const active = try codec.unpack(&heap, row.domain, observed.value);
+    try std.testing.expect(observed.layout.same(row.domain.layout));
+    try std.testing.expectEqualSlices(u8, &payload, active.input.bytes);
+    try std.testing.expectEqual(roots, (try managed.testing.rootStats(&heap)).count);
+}
 test "Array reader rejects corrupt domain, trailing data and every decode allocation failure" {
     const raw = try bytes(); defer allocator.free(raw);
     const corrupt = try allocator.dupe(u8, raw); defer allocator.free(corrupt);

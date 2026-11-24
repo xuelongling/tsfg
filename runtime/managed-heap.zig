@@ -35,6 +35,7 @@ pub const Scope = @import("managed-handles.zig").Scope;
 pub const ArrayLayout = element.Layout;
 pub const ArrayInput = element.Input;
 pub const ArrayValue = element.Value;
+const ArrayValueWithLayout = struct { layout: ArrayLayout, value: ArrayValue };
 pub const CellLayout = @import("managed-cell.zig").Layout;
 const Cell = @import("managed-cell.zig").Cell;
 pub const Value = struct { identity: u64, type_id: u64, scalar: u64, edge_count: usize };
@@ -349,12 +350,25 @@ pub const ManagedHeap = struct {
     }
 
     pub fn readTypedArray(self: *ManagedHeap, handle: Handle, expected: ArrayLayout, index: u32, lifetime: Lifetime) Error!ArrayValue {
+        return self.readArrayElement(handle, expected, index, lifetime, false);
+    }
+
+    pub fn readTypedArrayWithLayout(self: *ManagedHeap, handle: Handle, expected: ArrayLayout, index: u32, lifetime: Lifetime) Error!ArrayValueWithLayout {
+        return self.readArrayElement(handle, expected, index, lifetime, true);
+    }
+
+    fn readArrayElement(self: *ManagedHeap, handle: Handle, expected: ArrayLayout, index: u32, lifetime: Lifetime,
+        comptime own_layout: bool) Error!(if (own_layout) ArrayValueWithLayout else ArrayValue) {
         const object = try self.resolve(handle);
         const value = try arrays.array(object, expected);
         const source = try value.readBytes(index);
+        const scope = try self.scopeFor(lifetime);
+        const layout = if (own_layout) try value.layout.clone(self.allocator) else value.layout;
+        errdefer if (own_layout) layout.deinit(self.allocator);
         const start = @as(usize, index) * value.layout.reference_count;
-        return self.rootedValue(value.layout, value.tags[index], source,
-            object.edges[start..][0..value.layout.reference_count], try self.scopeFor(lifetime));
+        const result = try self.rootedValue(layout, value.tags[index], source,
+            object.edges[start..][0..layout.reference_count], scope);
+        return if (own_layout) .{ .layout = layout, .value = result } else result;
     }
 
     fn rootedValue(self: *ManagedHeap, layout: ArrayLayout, tag: u16, source: []const u8, edges: []?*Object, scope: u64) Error!ArrayValue {

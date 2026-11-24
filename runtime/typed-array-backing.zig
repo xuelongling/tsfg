@@ -77,8 +77,8 @@ pub const Module = struct {
         return checked_array.row;
     }
     fn readValue(heap: *managed.ManagedHeap, receiver: managed.Handle, row: Array, index: u32, lifetime: managed.Lifetime) managed.Error!access.Value {
-        const layout = try row.domain.layout.clone(heap.allocator); errdefer layout.deinit(heap.allocator);
-        return .{ .layout = layout, .value = try heap.readTypedArray(receiver, row.domain.layout, index, lifetime) };
+        const result = try heap.readTypedArrayWithLayout(receiver, row.domain.layout, index, lifetime);
+        return .{ .layout = result.layout, .value = result.value };
     }
     pub fn capture(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, index: u32) managed.Error!*Value {
         const row = try self.readable(heap, receiver, target, index);
