@@ -152,10 +152,12 @@ void SourcePlan::conditional(const Json &s,const Completion &active,const std::s
 }
 void SourcePlan::loop(const Json &s,const Completion &active,const std::string &path){
   const auto header=block(),body=block(),after=block();if(!check.step(cells.size()*3+1))return;const auto saved=cells;
-  branch(header,{},sourceAnchor(s));current=header;emit("fuel",{},"",Object{{"event",2}},sourceAnchor(field(s,"condition")));
-  const auto condition=expression(field(s,"condition"));emit("cf.cond_br",{condition},"",Object{},sourceAnchor(field(s,"condition")),{uint16_t(body),uint16_t(after)});
+  const auto &term=field(s,"condition");const auto anchor=sourceAnchor(term);
+  branch(header,{},sourceAnchor(s));current=header;emit("fuel",{},"",Object{{"event",2}},anchor);
+  const auto condition=expression(term);emit("cf.cond_br",{condition},"",Object{},anchor,{uint16_t(body),uint16_t(after)});
   current=body;cells=saved;region(items(field(s,"body")),active,[this,header,r=sourceAnchor(s)]{branch(header,{},r);},path+"/body");current=after;cells=saved;
-  if(string(field(field(s,"condition"),"kind"))=="booleanLiteral"&&string(field(field(s,"condition"),"token"))=="true")emit("unreachable",{},"",Object{},sourceAnchor(s));
+  const auto normal=normalBooleanOutcome(check,term);if(!ok())return;
+  if(normal==true)emit("unreachable",{},"",Object{},sourceAnchor(s));
 }
 void SourcePlan::attempt(const Json &s,const Completion &active,const std::string &path){
   const auto handler=function.id+"/"+path;const auto after=block();const bool hasCatch=!field(s,"catchClause").getAsNull(),hasFinally=!field(s,"finallyBlock").getAsNull();

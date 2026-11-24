@@ -84,6 +84,36 @@ test('short-circuit truth closes fallthrough and retains the left call',()=>{
   assert.throws(()=>planned([],null,[guarded('&&','true',false)],[target]),/unproved successful function fallthrough/);
 });
 
+test('always-true while retains per-iteration fuel, condition effects and the back edge',()=>{
+  const target={id:'loop-test-target',kind:'source',parameters:[],returnType:boolTypeId,signatureHash:sha256('loop-test-target')};
+  const left={kind:'call',callee:target.id,type:boolTypeId,range:at(20,25),arguments:[],
+    signature:{parameters:[],returnType:boolTypeId}};
+  const boolean=(token,range)=>({kind:'booleanLiteral',token,type:boolTypeId,range});
+  const loop=condition=>({kind:'while',condition,body:[],range:at(13,39)});
+  const logical=token=>loop({kind:'binary',operator:'||',type:boolTypeId,range:at(20,34),left,right:boolean(token,at(30,34))});
+  const statement=logical('true'),{plan}=planned([],null,[statement],[target]),ops=instructions(plan);
+  const fuel=op=>op.name==='tsfg_program.fuel'&&op.properties.event===2;
+  const header=plan.graph.blocks.find(block=>block.instructions.some(fuel));
+  assert.deepEqual(ops.filter(fuel).map(op=>op.range),[statement.condition.range]);
+  assert.ok(header.instructions.some(op=>op.name==='tsfg_program.invoke'&&op.properties.function_id===target.id));
+  assert.deepEqual(ops.filter(op=>op.name==='tsfg_program.return_throw').map(op=>op.range),[left.range]);
+  const branches=ops.filter(op=>op.name==='cf.cond_br');
+  const after=plan.graph.blocks.find(block=>block.instructions.at(-1)?.name==='tsfg_program.unreachable');
+  const branch=branches.find(op=>op.successors[1]===after.name);
+  const body=plan.graph.blocks.find(block=>block.name===branch.successors[0]);
+  assert.equal(branches.length,2);
+  assert.deepEqual(branch.range,statement.condition.range);
+  assert.deepEqual(body.instructions.at(-1).successors,[header.name]);
+  assert.equal(body.instructions.at(-1).name,'cf.br');
+  assert.deepEqual(after.instructions.at(-1).range,statement.range);
+  assert.doesNotThrow(()=>planned([],null,[loop(boolean('true',at(20,24)))]));
+  for(const open of [loop(boolean('false',at(20,25))),logical('false')]){
+    assert.throws(()=>planned([],null,[open],[target]),/unproved successful function fallthrough/);
+    const returned={kind:'return',value:literal('7',at(48)),range:at(41,50)};
+    assert.ok(instructions(planned([],null,[open,returned],[target]).plan).some(op=>op.name==='func.return'));
+  }
+});
+
 // A partial literal payload for the body validator's own interface, with real
 // token ranges and Source origin IDs. This is never packaged or certified.
 function checkedBody(parameters,arguments_,minimum=undefined,signatureMinimum=minimum,asValue=false) {
