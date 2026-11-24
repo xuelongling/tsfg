@@ -817,8 +817,17 @@ DirectThrowPotential projectDirectThrowPotential(Program &p,const Function &cfg,
   if(!invocation)return pending();
   if(!meter.spend(4))return Status::Invalid;const auto target=field(invocation->properties,"function_id").getAsString().value_or("");
   if(!meter.equal(target,call.functionId)||!meter.text(call.site.size()+cfg.id.size()))return pending();
-  llvm::StringRef site(call.site);if(!site.consume_front(cfg.id)||!site.consume_front("/bb")||!site.consume_back("/0")||site.empty())return pending();
-  uint64_t sourceBlock=0;if((site.size()>1&&site.front()=='0')||site.getAsInteger(10,sourceBlock)||sourceBlock!=blocks->second[0]||sourceBlock==noRegister)return pending();
+  const auto entryBlock=blocks->second[0];if(entryBlock==noRegister)return pending();
+  llvm::StringRef site(call.site);
+  if(site.starts_with("[")){
+    // The Source graph names the same checked invocation by target and range.
+    if(!meter.text(target.size())||!meter.spend(12))return Status::Invalid;
+    const auto sourceSite=canonical(Array{target.str(),int64_t(invocation->range.start),int64_t(invocation->range.end),"call"});
+    if(!meter.equal(site,sourceSite))return pending();
+  }else{
+    if(!site.consume_front(cfg.id)||!site.consume_front("/bb")||!site.consume_back("/0")||site.empty())return pending();
+    uint64_t sourceBlock=0;if((site.size()>1&&site.front()=='0')||site.getAsInteger(10,sourceBlock)||sourceBlock!=entryBlock)return pending();
+  }
   const auto entryCall=[&](const V4::Graph &graph){
     return meter.spend(5)&&graph.calls[0].control==0&&!graph.controls.empty()&&
       graph.controls[0].kind==V4::ControlKind::Entry&&graph.language.size()==1&&graph.exits.language.size()==1;
@@ -851,11 +860,11 @@ static ProjectedReturnEffects deriveProjectedEffectsImpl(Program &p,const Json &
       const Function *cfg=nullptr;
       for(const auto &candidate:p.functions){if(!work(p,e,(candidate.id.size()+id.size())/8+2))return Status::Invalid;if(candidate.id==id)cfg=&candidate;}
       if(!cfg||bound==state.graphs.end()){p.returnOriginPending.insert(id);return Status::Open;}
-      // A constructor inherits the callee's EH facet. Its checked CFG can
-      // independently establish whether the caller intercepts the payload.
+      // The full upper includes inherited EH. The checked CFG establishes
+      // whether this caller intercepts the language completion.
       const auto forwarded=cfg->role=="construction-body"
         ?projectConstructorThrowPotential(p,*cfg,parsed.graph,bound->second,index,e)
-        :out.ehControl?DirectThrowPotential::Pending:projectDirectThrowPotential(p,*cfg,parsed.graph,bound->second,e);
+        :projectDirectThrowPotential(p,*cfg,parsed.graph,bound->second,e);
       if(forwarded==DirectThrowPotential::Invalid)return Status::Invalid;
       if(forwarded!=DirectThrowPotential::Forwarded){p.returnOriginPending.insert(id);return Status::Open;}
       fullThrowPotential=true;

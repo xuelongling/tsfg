@@ -485,7 +485,7 @@ export function solveReturnOriginContexts(root,fixed,{projectField,mayAlias,actu
         for(const source of sources){spend();completeCapture(source.context,source.heap,source.bases,selected.id,access.slot);}}}
     }
   }
-  const owners=refs=>{const result=new Set();for(const ref of refs)for(const id of initial.values[ref]){spend();const owner=locations[id].owner;if(owner!==null)result.add(owner);}return result;};
+  const owners=(refs,includeUnowned=false)=>{const result=new Set();for(const ref of refs)for(const id of initial.values[ref]){spend();const owner=locations[id].owner;if(owner!==null||includeUnowned)result.add(owner);}return result;};
   const holdsEnvironment=refs=>{for(const ref of refs)for(const id of initial.values[ref]){spend();const node=locations[id].node;if(node.kind==='code'&&node.environment!==null)return true;}return false;};
   const validateReturns=(normal,language,exits)=>{for(const completion of ['normal','language']){
     const values=resolved(initial,completion==='normal'?normal:language);for(const state of exits[completion]){spend();if(initial.controls[state.control])returnedEnvironments(initial,values,state.heap);}

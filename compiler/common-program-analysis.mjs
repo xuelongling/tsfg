@@ -35,9 +35,11 @@ const scopeDigest=(scope,spend)=>publicationIdentity('publication-scope',scope,s
 // contracts when implementations change.
 export function createCommonProgramPublication(input) {
   const hir=verifyCommonProgramHir(input),spend=commonMeter(),physical=commonProgramPhysical(hir),storage=commonFixedStorageProjection(hir,physical),
-    projection=storage.status==='open'?null:storage,effects=commonEffects(hir,physical.model.spend,physical),derived=effects.derived(),
+    projection=storage.status==='open'?null:storage,
     availability=commonReturnOriginAvailability(hir,physical.model.callables,physical.model.methods,physical.model.spend,projection,physical),
-    source=commonReturnOriginSource(hir,physical.model.spend,physical,projection,null,null,availability.selected),graphs=source.derived(availability.dependencies,derived);
+    readSpanProof={selected:availability.selected,pending:new Map()},effects=commonEffects(hir,physical.model.spend,physical,readSpanProof),
+    derived=effects.derived(),source=commonReturnOriginSource(hir,physical.model.spend,physical,projection,null,null,availability.selected),
+    graphs=source.derived(availability.dependencies,derived,readSpanProof.pending);
   spend(hir.functions.length);
   const contracts=hir.functions.map(fn=>{
     spend();const {returnOrigins=null,...upper}=graphs.get(fn.id)??derived.get(fn.id),body={functionId:fn.id,signatureHash:fn.signatureHash,
@@ -99,7 +101,7 @@ export const printCommonProgramPublication=(publication,input)=>canonical(verify
 function prepare(input,publication) {
   const admitted=admit(input,publication),{hir,spend,records,scope,fixedScope}=admitted;
   const physical=commonProgramPhysical(hir,records),storage=commonFixedStorageProjection(hir,physical,publication.scope.storage),
-    projection=storage.status==='open'?null:storage,effects=commonEffects(hir,physical.model.spend,physical),
+    projection=storage.status==='open'?null:storage,
     availability=commonReturnOriginAvailability(hir,physical.model.callables,physical.model.methods,physical.model.spend,projection,physical);
   for(const [id,row]of records){spend();if(row.returnOrigins===null)availability.reasons.set(id,'fixed-return-open');
     else for(const call of row.returnOrigins.calls){spend();availability.dependencies.get(id).add(call.functionId);}
@@ -108,8 +110,9 @@ function prepare(input,publication) {
     for(const target of targets){spend();if(availability.reasons.has(target)){availability.reasons.set(id,'fixed-callee-return-open');changed=true;break;}}
   }}
   for(const id of availability.reasons.keys()){spend();availability.selected.delete(id);}
-  const source=commonReturnOriginSource(hir,physical.model.spend,physical,projection,fixedScope.typeKind,records,availability.selected,fixedScope.catalogue);
-  return {hir,spend,effects,records,scope,physical,source,availability};
+  const readSpanProof={selected:availability.selected,pending:new Map()},effects=commonEffects(hir,physical.model.spend,physical,readSpanProof),
+    source=commonReturnOriginSource(hir,physical.model.spend,physical,projection,fixedScope.typeKind,records,availability.selected,fixedScope.catalogue);
+  return {hir,spend,effects,records,scope,physical,source,availability,readSpanProof};
 }
 function analyze(input,publication) {
   const prepared=prepare(input,publication),{hir,effects,spend,records}=prepared,derived=effects.derived();
@@ -119,7 +122,7 @@ function analyze(input,publication) {
   for(const fn of hir.functions) {
     spend();const current=batch.derive(fn),record=records.get(fn.id),reason=prepared.availability.reasons.get(fn.id);
     let returnOriginStatus={status:'open',reason:reason??'fixed-return-open'},body=null;
-    if(!reason){body=prepared.source.derive(fn,null);current.upper=commonJoinReturnOriginEffects(current.upper,body.upper,prepared.physical.model.spend);}
+    if(!reason){body=prepared.source.derive(fn,null,false,prepared.readSpanProof.pending.get(fn.id));current.upper=commonJoinReturnOriginEffects(current.upper,body.upper,prepared.physical.model.spend);}
     check(covers(record.upper,current.upper,prepared.physical.model.spend),'contract','current implementation exceeds fixed Published upper',
       {functionId:fn.id,primary:{sourceId:fn.sourcePath,...fn.range}});
     if(body?.pendingReason)returnOriginStatus={status:'open',reason:body.pendingReason};

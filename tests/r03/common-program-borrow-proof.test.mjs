@@ -5,12 +5,15 @@ import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
-import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
+import {analyzeCommonProgram,createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {commonProgramPhysical} from '../../compiler/common-program-physical.mjs';
 import {commonBorrowEvents} from '../../compiler/common-program-borrow-events.mjs';
 import {createCommonBorrowProof,readCommonBorrowProof,writeCommonBorrowProof} from '../../compiler/common-program-borrow-proof.mjs';
-import {canonical} from '../../compiler/identity.mjs';
+import {canonical,sha256} from '../../compiler/identity.mjs';
+import {commonIdentity} from '../../compiler/common-program-identities.mjs';
+import {normalizeClosure} from '../../compiler/modules.mjs';
+import {originId,signatureId} from '../../compiler/typed-array-schema.mjs';
 import {compileCommonBorrowProof} from '../../compiler/pipeline.mjs';
 const cases=['safe-lastuse','later-use-conflict','borrow-completions'].map(name=>{
   const facts=readCommonProgramFacts(readFileSync(new URL('./testdata/common-borrow-proof/'+name+'-facts.json',import.meta.url))),hir=projectCommonProgram(facts),publication=createCommonProgramPublication(hir),request={targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
@@ -39,6 +42,88 @@ test('whole Source preserves actual Span normal and language return propagation'
   const descriptor=proof.events.definitions.find(row=>row.at.functionId===caller.id);assert.ok(descriptor);
   for(const route of routes){assert.ok(proof.events.uses.some(row=>row.at.functionId===caller.id&&row.descriptors.some(value=>canonical(value)===canonical(descriptor.descriptor))&&reachable(proof,route.successor,row.at)));}
   assert.ok(completed.hir.functions.some(fn=>fn.name==='arrayOrdinary'));assert.ok(completed.hir.types.some(type=>type.name==='Box'));
+});
+test('a direct tail return forwards the same ReadSpan through both call completions',()=>{
+  const facts=structuredClone(completed.hir.snapshot),payload=facts.payload;
+  const relay=payload.functions.find(fn=>fn.name==='relayBorrowCompletion'),name='nextBorrowCompletionx';
+  const caller=payload.functions.find(fn=>fn.name==='borrowCompletions');
+  const call=caller.body[2].tryBlock.body[0].initializer,source=payload.files.find(file=>file.path===relay.sourcePath);
+  const previous=source.content,start=previous.length;
+  assert.equal(previous.slice(call.calleeRange.start,call.calleeRange.end),relay.name);
+  assert.equal(name.length,relay.name.length);
+  const prefix=previous.slice(relay.declarationRange.start,relay.returnAnnotationRange.end).replace(relay.name,name)+'{';
+  const returnedCall=relay.name+'('+relay.parameters.map(parameter=>parameter.name).join(',')+')';
+  const addition=prefix+'return '+returnedCall+';}';
+  source.content=previous.slice(0,call.calleeRange.start)+name+previous.slice(call.calleeRange.end)+addition+'\n';
+  source.byteLength=Buffer.byteLength(source.content);
+  source.utf16Length=source.content.length;
+  source.sha256=sha256(source.content).slice(7);
+  const files=payload.files.map(({path,content,sha256})=>({path,content,sha256}));
+  for(const type of payload.types)if(['value','reference'].includes(type.kind))
+    type.runtimeKey=sha256('tsfg.array-facts.runtime-class.v8\0'+canonical({files:files.map(({path,sha256})=>({path,sha256})),nominalKey:type.nominalKey}));
+  const declarationRange={start,end:start+addition.length},declarationScope={start:0,end:source.utf16Length};
+  const shift=start-relay.declarationRange.start,move=range=>range===null?null:{start:range.start+shift,end:range.end+shift};
+  const id=sha256('tsfg.array-facts.function.v8\0'+canonical({sourcePath:source.path,declarationRange}));
+  const parameters=relay.parameters.map(parameter=>{
+    const nameRange=move(parameter.nameRange);
+    return {...parameter,id:originId(source.path,nameRange),lexicalOwner:id,nameRange,annotationRange:move(parameter.annotationRange),
+      declarationRange:move(parameter.declarationRange),elementAnnotationRange:move(parameter.elementAnnotationRange)};
+  });
+  const returnStart=start+prefix.length,callStart=returnStart+'return '.length,calleeEnd=callStart+relay.name.length;
+  let argumentStart=calleeEnd+1;
+  const args=parameters.map((parameter,index)=>{
+    const range={start:argumentStart,end:argumentStart+parameter.name.length};argumentStart=range.end+1;
+    return {...call.arguments[index],binding:parameter.id,range};
+  });
+  const callRange={start:callStart,end:callStart+returnedCall.length};
+  const body=[{kind:'return',range:{start:returnStart,end:declarationRange.end-1},
+    value:{...call,range:callRange,calleeRange:{start:callStart,end:calleeEnd},arguments:args}}];
+  for(const fn of payload.functions)if(fn.sourcePath===source.path&&fn.lexicalParent===null&&!fn.ownerType)fn.declarationScope=declarationScope;
+  for(const roots of [payload.closure.roots,payload.closure.requiredRoots])for(const root of roots)
+    if(root.kind==='module-initialization'&&root.sourcePath===source.path)root.range=declarationScope;
+  const forward={...relay,name,id,declarationRange,declarationScope,nameRange:move(relay.nameRange),
+    returnAnnotationRange:move(relay.returnAnnotationRange),parameters,body};
+  payload.functions.push(forward);
+  payload.functions.sort((a,b)=>a.sourcePath.localeCompare(b.sourcePath)||a.declarationRange.start-b.declarationRange.start);
+  call.callee=id;
+  call.signature={...call.signature,declarationRange,id:signatureId(source.path,declarationRange)};
+  const tuples=roots=>roots.map(({kind,sourcePath,name})=>({kind,sourcePath,name}));
+  const compilationClosure=normalizeClosure({roots:tuples(payload.closure.roots),requiredRoots:tuples(payload.closure.requiredRoots)});
+  const request={family:'tsfg.program-facts-request-candidate',version:facts.version,schemaHash:facts.schemaHash,input:{
+    sourceRoot:payload.sourceRoot,rootFile:payload.rootFile,files,declarations:payload.declarations,config:payload.config,target:payload.target,
+    compilationClosure,hostImports:payload.hostImports.map(({sourcePath,name,capabilityId,parameterTypes,returnType})=>({sourcePath,name,capabilityId,parameterTypes,returnType}))}};
+  facts.requestId=sha256('tsfg.program-facts.request.v'+facts.version+'\0'+canonical(request)+'\n');
+  facts.packageId=sha256('tsfg.program-facts.package.v'+facts.version+'\0'+facts.schemaHash+'\0'+canonical(payload));
+
+  const hir=projectCommonProgram(facts),publication=createCommonProgramPublication(hir);
+  const proof=proofOf({hir,publication,request:completed.request});
+  const forwardId=hir.functions.find(fn=>fn.name===name).id,relayId=hir.functions.find(fn=>fn.name===relay.name).id;
+  const callerId=hir.functions.find(fn=>fn.name===caller.name).id;
+  const descriptor=proof.events.definitions.find(row=>row.at.functionId===callerId);
+  assert.ok(descriptor);
+  const routes=(functionId,target)=>proof.events.calls.filter(row=>row.at.functionId===functionId&&row.target===target);
+  for(const [functionId,target] of [[callerId,forwardId],[forwardId,relayId]])
+    assert.deepEqual([...new Set(routes(functionId,target).map(row=>row.completion))].sort(),['language','normal']);
+  for(const route of routes(callerId,forwardId))
+    assert.ok(proof.events.uses.some(row=>row.at.functionId===callerId&&reachable(proof,route.successor,row.at)
+      &&row.descriptors.some(value=>canonical(value)===canonical(descriptor.descriptor))));
+
+  const withRelayGraph=change=>{
+    const changed=structuredClone(publication),contract=changed.contracts.find(row=>row.functionId===relayId);
+    contract.returnOrigins=change(contract.returnOrigins);
+    const {digest,...fields}=contract;
+    contract.digest=commonIdentity('published-contract',fields);
+    changed.expectedDigest=commonIdentity('publication',{scopeDigest:changed.scopeDigest,contracts:changed.contracts});
+    return changed;
+  };
+  assert.throws(()=>analyzeCommonProgram(hir,withRelayGraph(()=>null)),{code:'r03-common-program-readspan-return-escape'});
+  assert.throws(()=>analyzeCommonProgram(hir,withRelayGraph(graph=>({...graph,normal:[]}))),{code:'r03-common-program-readspan-return-escape'});
+  assert.throws(()=>analyzeCommonProgram(hir,withRelayGraph(graph=>({...graph,language:[],exits:{...graph.exits,language:[]}}))),
+    {code:'r03-common-program-readspan-return-escape'});
+  assert.throws(()=>analyzeCommonProgram(hir,withRelayGraph(graph=>({
+    ...graph,normal:[...graph.normal,graph.nodes.length],
+    nodes:[...graph.nodes,{kind:'nonowning',type:graph.nodes[graph.normal[0]].type}]
+  }))),{code:'r03-common-program-readspan-return-escape'});
 });
 test('later callee use retains the existing structural conflict and cannot publish proof',()=>{
   const row=cases[1];assert.throws(()=>proofOf(row),{code:'r03-common-program-borrow-conflict'});

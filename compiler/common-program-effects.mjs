@@ -18,7 +18,7 @@ export function commonEffectsCover(upper,body,spend) {
     &&commonFacets.every(flag=>!body.facets[flag]||upper.facets[flag])
     &&body.parameters.every((row,index)=>flags.every(flag=>!row[flag]||upper.parameters[index][flag]));
 }
-export function commonEffects(hir,spend,physical=null) {
+export function commonEffects(hir,spend,physical=null,readSpanProof=null) {
   const collections=commonCollections(spend);
   spend(hir.types.length+hir.functions.length+hir.globals.length);
   const types=new Map(hir.types.map(row=>[row.id,row])),functions=new Map(hir.functions.map(row=>[row.id,row]));
@@ -228,8 +228,14 @@ export function commonEffects(hir,spend,physical=null) {
           if(row.initializer){const assigned=possibleThrow(inspect(row.initializer));environment.set(row.binding,assigned);if(row.global)write.add(row.global);}
         }else if(row.kind==='expression')possibleThrow(inspect(row.value));
         else if(row.kind==='return') {
-          if(row.value){const assigned=possibleThrow(inspect(row.value));if(reference(fn.returnType))facet('escape','operation',row.kind,row.range);if(types.get(fn.returnType)?.kind==='readSpan')
-            check(!collections.array(assigned).some(owner=>owner.startsWith('local:')||owner.startsWith('unknown:')),'readspan-return-escape',undefined,{primary:{sourceId:fn.sourcePath,...row.range}});}
+          if(row.value){const assigned=possibleThrow(inspect(row.value));if(reference(fn.returnType))facet('escape','operation',row.kind,row.range);
+            if(types.get(fn.returnType)?.kind==='readSpan'&&collections.array(assigned).some(owner=>owner.startsWith('local:')||owner.startsWith('unknown:'))){
+              let value=row.value;while(value.kind==='parentheses'){spend();value=value.expression;}
+              const callee=value.kind==='call'?functions.get(value.callee):null;
+              check(readSpanProof?.selected.has(fn.id)&&callee?.kind==='source'&&callee.sourcePath===fn.sourcePath
+                &&callee.returnType===fn.returnType,'readspan-return-escape',undefined,{primary:{sourceId:fn.sourcePath,...row.range}});
+              spend();const pending=readSpanProof.pending.get(fn.id)??new Set();pending.add(row);readSpanProof.pending.set(fn.id,pending);
+            }}
           current.delete('normal');current.add('return');rememberExit(exits,'return',environment);
         }else if(row.kind==='throw') {
           possibleThrow(inspect(row.value));facet('ehControl','operation',row.kind,row.range);current=new Set(['throw']);

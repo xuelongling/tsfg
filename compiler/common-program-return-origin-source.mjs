@@ -79,10 +79,10 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
   const ownerParameters=fn=>{spend(fn.parameters.length+1);return [...(fn.ownerType?[{id:fn.receiverBinding,type:fn.ownerType}]:[]),...fn.parameters];};
   const blank=fn=>({captures:[],globals:{reads:[],writes:[]},hostResources:{reads:[],writes:[]},parameters:ownerParameters(fn).map((_,index)=>({index,read:false,write:false,structural:false})),
     facets:Object.fromEntries(commonFacets.map(flag=>[flag,false])),returnOrigins:{format:commonReturnOriginFormat,normal:[],language:[],nodes:[],heaps:[{kind:'entry'}],controls:[{kind:'entry'}],calls:[],exits:{normal:[{heap:0,control:0}],language:[]},accesses:[]}});
-  function derive(fn,records,diagnostics=false) {
+  function derive(fn,records,diagnostics=false,readSpanReturns=null) {
     records=fixedUppers??records;
     const result=blank(fn),read=new Set(),write=new Set(),hostRead=new Set(),hostWrite=new Set(),hostCalls=[],params=ownerParameters(fn),origins=new Map(),calls=[],captures=new Map();
-    const local=diagnostics?new Map():null;let operationSource=fn.sourcePath;
+    const local=diagnostics?new Map():null,forwarded=readSpanReturns?new Map():null;let operationSource=fn.sourcePath;
     const bindings=new Map();for(const binding of fn.parameters){spend();bindings.set(binding.id,binding);}
     for(const binding of fn.bindings??[]){spend();bindings.set(binding.id,binding);}
     const protocol=owner=>catalogue.functions.get(owner.id)??protocols.get(owner.id);
@@ -97,6 +97,8 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     const mayAlias=(a,b)=>a.node.kind!=='local'||b.node.kind!=='local'||a.node.type===b.node.type;
     const graph=commonReturnOrigins(spend,{projectField,mayAlias,actualType,contracts,environments,constructions:catalogue.constructions,rootProtocol:protocol(fn)}),normalReturns=new Set(),normalExits=new Set(),languageExits=new Set(),marks=[];
     if(projectionPlans.has(fn.id)){
+      if(readSpanReturns)for(const row of readSpanReturns)
+        check(false,'readspan-return-escape',undefined,{primary:{sourceId:fn.sourcePath,...row.range}});
       const plan=projectionPlans.get(fn.id),projected=projectConstructorReturnOrigins({plan,model:physical.model,carriers:physical.carriers},catalogue,graph,spend),captureRows=new Map();
       for(const capture of fn.captures??[]){spend();const slot=slots.get(capture.binding);captureRows.set(slot.key,{slot:slot.key,read:capture.read,write:capture.write,structural:false});}
       for(const [flag,roots]of projected.effects.accesses)for(const root of roots){spend();
@@ -291,7 +293,8 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
         else if(row.kind==='return') {
           if(row.value){const evaluated=possibleThrow(inspect(row.value)),assigned=fn.returnType==='void'||types.get(fn.returnType)?.kind==='void'?new Set():copied(evaluated,fn.returnType,row.range,'return');join(rowReturns,assigned);if(reference(fn.returnType))facet('escape','operation',row.kind,row.range);
             if(types.get(fn.returnType)?.kind==='function'&&(graph.owners(assigned).size||graph.holdsEnvironment(assigned))){facet('managedReference','operation',row.kind,row.range);facet('escape','operation',row.kind,row.range);}
-            if(types.get(fn.returnType)?.kind==='readSpan')check(!collections.array(graph.owners(assigned)).some(owner=>owner.startsWith('local:')||owner.startsWith('unknown:')),'readspan-return-escape',undefined,{primary:{sourceId:fn.sourcePath,...row.range}});}
+            if(readSpanReturns?.has(row)){spend();const returned=forwarded.get(row)??new Set();join(returned,assigned);forwarded.set(row,returned);}
+            else if(types.get(fn.returnType)?.kind==='readSpan')check(!collections.array(graph.owners(assigned)).some(owner=>owner.startsWith('local:')||owner.startsWith('unknown:')),'readspan-return-escape',undefined,{primary:{sourceId:fn.sourcePath,...row.range}});}
           current.delete('normal');current.add('return');
           rowReturnHeaps.add(graph.checkpoint());
           rowReturnStates.push(collections.map(environment));
@@ -371,13 +374,20 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
     // than freezing permissions from only the first visit to a loop header.
     for(const {set,flag,value}of marks){spend();project(graph.owners(set),flag,value);}
     const solved=graph.effects();for(const [flag,owners]of solved.accesses){spend();project(owners,flag,null);}
+    // A tail call may forward the descriptor of one original ReadSpan formal.
+    // Check its own solved return, after all calls and control joins are known.
+    if(readSpanReturns)for(const row of readSpanReturns){
+      spend();const actual=forwarded.get(row),owners=actual?graph.owners(actual,true):new Set(),owner=owners.values().next().value;
+      check(!solved.potentialLanguage&&owners.size===1&&owner?.startsWith('p:')&&params[Number(owner.slice(2))]?.type===fn.returnType,
+        'readspan-return-escape',undefined,{primary:{sourceId:fn.sourcePath,...row.range}});
+    }
     result.facets.mayThrow=false;for(const state of languageExits){spend();result.facets.mayThrow ||= graph.live(state);}
     if(local&&result.facets.mayThrow)for(const origin of throws.values())retain({kind:'facet',facet:'mayThrow'},origin);
     result.captures=collections.sorted(captures.values(),(a,b)=>a.slot<b.slot?-1:a.slot>b.slot?1:0);
     result.returnOrigins=graph.snapshot(normalReturns,languageReturns,{normal:collections.array(normalExits),language:collections.array(languageExits)});
     result.globals={reads:collections.sorted(read),writes:collections.sorted(write)};result.hostResources={reads:collections.sorted(hostRead),writes:collections.sorted(hostWrite)};return {upper:result,calls,hostCalls,completions:collections.sorted(completions),local,pendingReason:solved.potentialLanguage?'fixed-potential-language-open':null};
   }
-  function derived(dependencies=null,effectUppers=null) {
+  function derived(dependencies=null,effectUppers=null,readSpanReturns=null) {
     check(fixedRecords===null,'publication-mode','a fixed consumer cannot replace its admitted uppers with current-body derivation');
     // Availability has excluded recursive/unavailable call components. Author
     // each complete fixed target before its caller, once, without inventing
@@ -388,7 +398,7 @@ export function commonReturnOriginSource(hir,spend,physical=null,storageProjecti
       check(owner&&!active.has(id),'return-origin-call-open','authoring requires a complete nonrecursive fixed call component');active.add(id);
       const targets=calls.get(id);check(targets,'return-origin-call-open','authoring call membership is missing');
       for(const target of targets){spend();visit(target);}
-      const projected=derive(owner,rows).upper;
+      const projected=derive(owner,rows,false,readSpanReturns?.get(id)).upper;
       // Callers must see the same upper here that they will consume after admission.
       let upper=projected;
       if(effectUppers!==null){

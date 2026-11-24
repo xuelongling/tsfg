@@ -96,7 +96,7 @@ export function commonReturnOrigins(spend,{projectField=()=>null,mayAlias=()=>tr
   const solve=()=>{if(solvedRevision===revision)return solved;spend(accesses.size+1);const graph={format,nodes,heaps,controls,calls,accesses:[...accesses.values()],normal:[],language:[],exits:{normal:[state],language:[]}};
     const completedRootReturns=selectedReturns?.revision===revision?selectedReturns.roots:null;
     solved=solveReturnOriginContexts(graph,contracts,{projectField,mayAlias,actualType,environments,constructions,rootProtocol,completedRootReturns},spend);solvedRevision=revision;return solved;};
-  const owners=values=>solve().owners(values);
+  const owners=(values,includeUnowned=false)=>solve().owners(values,includeUnowned);
   const holdsEnvironment=values=>solve().holdsEnvironment(values);
   const effects=()=>{const result=solve();return {accesses:result.effects,facets:result.facets,calls:result.calls,potentialLanguage:result.potentialLanguage};};
   const live=selected=>solve().live(selected.control);
