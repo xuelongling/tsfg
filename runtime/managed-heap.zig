@@ -474,7 +474,7 @@ pub const ManagedHeap = struct {
     }
 
     pub fn readViewedField(self: *ManagedHeap, module: anytype, receiver: Handle,
-        target: [32]u8, member: [32]u8, lifetime: Lifetime) Error!?struct { layout: ArrayLayout, value: ArrayValue } {
+        target: [32]u8, member: [32]u8, lifetime: Lifetime) Error!?struct { id: [32]u8, layout: ArrayLayout, value: ArrayValue } {
         comptime {
             if (@TypeOf(module) != @import("typed-reference-views.zig").Module and
                 @TypeOf(module) != @import("typed-field-backing.zig").Module) @compileError("verified member module required");
@@ -494,7 +494,7 @@ pub const ManagedHeap = struct {
         const scope = try self.scopeFor(lifetime);
         const layout = try value.layout.fields[index].layout.clone(self.allocator);
         errdefer layout.deinit(self.allocator);
-        return .{ .layout = layout, .value = try self.readFieldValue(object, value, index, scope) };
+        return .{ .id = id, .layout = layout, .value = try self.readFieldValue(object, value, index, scope) };
     }
 
     fn readFieldValue(self: *ManagedHeap, object: *Object, value: *const Cell, index: usize, scope: u64) Error!ArrayValue {
