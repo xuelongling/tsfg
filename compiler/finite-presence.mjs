@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: MIT
+import {boolTypeId} from './identity.mjs';
+
+export const isBooleanAssignment=value=>['&&=','||='].includes(value.operator)&&
+  (value.type==='bool'||(value.semanticType??value.type)===boolTypeId)&&
+  (value.target.type==='bool'||value.target.type===boolTypeId);
+export const isLocalBooleanAssignment=value=>isBooleanAssignment(value)&&
+  (value.kind==='assignment'||value.kind==='bindingAssignment');
 // Presence is an actual-payload fact, never Boolean truthiness or a declared
 // type filter. Unknown evidence keeps both continuations possible.
 export const isFiniteAbsence=kind=>kind==='null'||kind==='undefined';

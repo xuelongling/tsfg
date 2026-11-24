@@ -2,7 +2,7 @@
 // Only statically definite density violations are rejected. Unknown accesses retain checks.
 import {check} from './typed-array-schema.mjs';
 import {hasConditionalArrayRhs} from './array-analysis-types.mjs';
-import {isArrayNullishAssignment,isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
+import {isArrayNullishAssignment,isBooleanAssignment,isFieldNullishAssignment,isLocalBooleanAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 
 export function validateTypedArrayDensity(payload) {
   for(const fn of [...payload.functions,...payload.types.flatMap(row=>row.constructor?[row.constructor]:[])]) {
@@ -23,6 +23,7 @@ export function validateTypedArrayDensity(payload) {
         lengths.set(value.allocationSite,value.elements.length);return value.allocationSite;
       }
       const coalescingAssignment=isLocalNullishAssignment(value);
+      if(isLocalBooleanAssignment(value)){optionalRhs(value.value);return null;}
       if(value.kind==='bindingAssignment'&&!coalescingAssignment) {
         const owner=expression(value.value);bindings.set(value.target.binding,owner);return owner;
       }
@@ -30,19 +31,19 @@ export function validateTypedArrayDensity(payload) {
         if(!coalescingAssignment)expression(value.left);
         optionalRhs(coalescingAssignment?value.value:value.right);return null;
       }
-      if(isFieldNullishAssignment(value)){
+      if(isFieldNullishAssignment(value)||value.kind==='fieldAssignment'&&isBooleanAssignment(value)){
         expression(value.target.receiver);optionalRhs(value.value);return null;
       }
       if(['elementAssignment','lengthAssignment','elementCompoundAssignment','elementUpdate'].includes(value.kind)) {
         const owner=expression(value.target.receiver);expression(value.target.index);
-        const coalescingArray=isArrayNullishAssignment(value);
-        if(!coalescingArray)expression(value.value);
+        const optionalArray=isArrayNullishAssignment(value)||isBooleanAssignment(value);
+        if(!optionalArray)expression(value.value);
         const old=lengths.get(owner)??null,resize=value.kind==='lengthAssignment';
         const next=literal(resize?value.value:value.target.index);
         const primary={sourceId:fn.sourcePath,...value.range};
         if(owner&&old!==null&&next!==null)check(next<=old,
           resize?'dense-growth':'dense-gap',primary);
-        if(coalescingArray){optionalRhs(value.value);return null;}
+        if(optionalArray){optionalRhs(value.value);return null;}
         if(!owner)forget();
         else lengths.set(owner,next===null?null:resize?next:old===null?null:Math.max(old,next+1));
         return null;

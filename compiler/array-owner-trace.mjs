@@ -6,7 +6,7 @@ import {finiteCallables} from './finite-callables.mjs';
 import {typedReferenceAuthority} from './typed-reference-authority.mjs';
 import {createSpanStorage} from './array-span-storage.mjs';
 import {createSpanContexts} from './array-span-contexts.mjs';
-import {isArrayNullishAssignment,isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
+import {isArrayNullishAssignment,isBooleanAssignment,isFieldNullishAssignment,isLocalBooleanAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 
 export const unknownArrayOwner=Object.freeze({kind:'unknown'});
 export const parameterArrayOwner=(fn,index)=>({kind:'parameter',functionId:fn.id,index});
@@ -308,11 +308,18 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
           mutate(value,path,receiver??unknownArrayOwner,index,value.kind==='arrayResizeChecked');
           return rhs;
         };
-        const rhs=isArrayNullishAssignment(value)?conditionalEffect(null,writeBack):writeBack();
+        const rhs=isArrayNullishAssignment(value)||isBooleanAssignment(value)?conditionalEffect(null,writeBack):writeBack();
         if(value.kind==='arrayStoreDenseChecked'&&type.isOwner(value.value.type)){
           owner=rhs;
           writeContents(receiver,rhs);
         }
+      }else if(isLocalBooleanAssignment(value)) {
+        const binding=value.target.binding,old=truthBindings.get(binding);
+        const executes=context&&typeof old==='boolean'?old===(value.operator==='&&='):null;
+        conditionalEffect(executes,()=>{
+          const right=[...path,'value'];expression(value.value,right,index);
+          truthBindings.set(binding,truthValues.get(canonical(right))??null);
+        });
       }else if(hasConditionalArrayRhs(value)) {
         const coalescingAssignment=isLocalNullishAssignment(value),rightKey=coalescingAssignment?'value':'right',
           left=coalescingAssignment?null:expression(value.left,[...path,'left'],index);
@@ -320,7 +327,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         const executes=context&&typeof leftTruth==='boolean'?(op==='&&'?leftTruth:op==='||'?!leftTruth:op==='??'?false:null):null;
         const right=conditionalEffect(executes,()=>expression(value[rightKey],[...path,rightKey],index));
         owner=coalescingAssignment?null:mergeArrayOwners([left,right]);
-      }else if(isFieldNullishAssignment(value)) {
+      }else if(isFieldNullishAssignment(value)||isBooleanAssignment(value)) {
         expression(value.target.receiver,[...path,'target','receiver'],index);
         conditionalEffect(null,()=>expression(value.value,[...path,'value'],index));
       }else if(value.kind==='assignment') {
@@ -350,6 +357,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
       if(value.kind==='boolean')truth=value.value;
       else if(value.kind==='reference')truth=truthBindings.get(value.binding)??null;
       else if(['group','assertType','nonNull'].includes(value.kind))truth=truthValues.get(canonical([...path,'operand']))??null;
+      else if(isLocalBooleanAssignment(value))truth=truthBindings.get(value.target.binding)??null;
       else if(value.kind==='assignment'){truth=truthValues.get(canonical([...path,'value']))??null;truthBindings.set(value.target.binding,truth);}
       else if(value.kind==='binary'&&['===','!=='].includes(value.operator)){
         const left=truthValues.get(canonical([...path,'left'])),right=truthValues.get(canonical([...path,'right']));

@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
+import {originId} from '../../compiler/typed-array-schema.mjs';
 import {buildHir,buildInitialArrayPublication,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {buildFiniteArrayReaching} from '../../compiler/finite-array-reaching.mjs';
@@ -12,6 +13,8 @@ import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 
 function deriveFactsBytes(packet,source) {
   const payload=packet.payload;
+  source.byteLength=Buffer.byteLength(source.content);
+  source.utf16Length=source.content.length;
   source.sha256=sha256(source.content).slice(7);
   const {sourceRoot,rootFile,declarations,config}=payload;
   const files=payload.files.map(({path,sha256})=>({path,sha256}));
@@ -1143,4 +1146,121 @@ for(const row of [
     const base=await invokeCore(core);accepted(base);check(base.stdout.toString('utf8'));
     const optimized=await invokeCore(core,'--optimize');accepted(optimized);assert.deepEqual(optimized.stdout,base.stdout);
   });
+});
+
+test('finite logical local assignment evaluates the RHS only on the write edge',async()=>{
+  for(const operator of ['&&=','||=']){
+    const packet=await retainedPacket('finite-logical-while/package.json',
+      '574d2819750046d5552c790552bd1805affe5230fcc137069530c89d3c329237');
+    const fn=packet.payload.functions.find(row=>row.name==='common'),stmt=fn.body[1].body[0],assignment=stmt.value,
+      source=packet.payload.files.find(row=>row.path===fn.sourcePath);
+    const {start}=assignment.operatorRange,end=stmt.range.end;
+    assert.equal(source.content.slice(start,end),'=false;');
+    // ASI at the closing brace leaves the complete donor's other source spans intact.
+    source.content=source.content.slice(0,start)+operator+'true'+source.content.slice(end);
+    assignment.operator=operator;
+    assignment.operatorRange={start,end:start+3};
+    assignment.range.end=end;
+    assignment.value={kind:'booleanLiteral',token:'true',type:'bool',flowType:'bool',range:{start:start+3,end}};
+    const lines=lowerDerivedPacket(packet,source),condition=lines.find(line=>line.includes('cf.cond_br')&&line.includes(at(assignment.range)));
+    const [,old,yes,no]=/cf\.cond_br (%\w+), (\^bb\d+), (\^bb\d+)/u.exec(condition);
+    const arm=label=>lines.slice(lines.findIndex(line=>line.trim()===label+':')+1);
+    const finds=rows=>rows.find(line=>line.includes('cf.br'));
+    const write=arm(operator==='&&='?yes:no),skipped=arm(operator==='&&='?no:yes);
+    assert.ok(write[0].includes('"tsfg_core.constant"')&&write[0].includes(at(assignment.value.range)));
+    const [,rhs]=/(%\w+) = /u.exec(write[0]);
+    assert.ok(finds(write).includes('('+rhs+', '+rhs+' : i1, i1)'));
+    assert.ok(skipped[0].includes('cf.br')&&skipped[0].includes('('+old+', '+old+' : i1, i1)'));
+  }
+});
+
+test('finite logical Array assignment reads the old slot before branching and writes only on the RHS edge',async()=>{
+  for(const operator of ['&&=','||=']){
+    const packet=await retainedPacket('typed-array-actual-v8/aa472de340f45c64b9b63c95cd7765ab411f657f86b86e553d7cb0c2b7d2e7fc-package.json',
+      'f7d74ee04bb005a4df17a65e49f31b728ce7432961847523e5cdce62464a6fa2');
+    const {payload}=packet,fn=payload.functions[0],stmt=fn.body[0],old=stmt.value,
+      source=payload.files.find(row=>row.path===fn.sourcePath);
+    const {start,end}=old.range,suffix=operator+'a[i]',offset=end+operator.length-start;
+    assert.equal(source.content.slice(start,end),'a[i]');
+    source.content=source.content.slice(0,end)+suffix+source.content.slice(end);
+    fn.declarationRange.end+=suffix.length;
+    stmt.range.end+=suffix.length;
+    const {type,receiver,index,range}=old;
+    const shifted=value=>({...value,range:{start:value.range.start+offset,end:value.range.end+offset}});
+    const rhs={...shifted(old),receiver:shifted(receiver),index:shifted(index)};
+    stmt.value={kind:'elementCompoundAssignment',type,flowType:type,operator,
+      operatorRange:{start:end,end:end+operator.length},range:{start,end:end+suffix.length},
+      target:{kind:'elementTarget',type,range,receiver,index},value:rhs};
+    const sourceFunction=fn.id;
+    fn.id=sha256('tsfg.array-facts.function.v8\0'+canonical({sourcePath:fn.sourcePath,declarationRange:fn.declarationRange}));
+    for(const row of [...payload.exports,...payload.entryCompatibilityRoots]){
+      assert.equal(row.functionId,sourceFunction);row.functionId=fn.id;
+    }
+    const lines=lowerDerivedPacket(packet,source);
+    const read=lines.find(line=>line.includes('domain.array_read')&&line.includes(at(range))),
+      condition=lines.find(line=>line.includes('cf.cond_br')&&line.includes(at(stmt.value.range)));
+    const [,oldResult,array,indexValue]=/(%\w+) = "tsfg_core.domain.array_read"\((%\w+), (%\w+)\)/u.exec(read);
+    const [,branchValue,yes,no]=/cf\.cond_br (%\w+), (\^bb\d+), (\^bb\d+)/u.exec(condition);
+    assert.equal(branchValue,oldResult);
+    assert.ok(lines.indexOf(read)<lines.indexOf(condition));
+    const body=label=>lines.slice(lines.findIndex(line=>line.trim()===label+':')+1);
+    const write=body(operator==='&&='?yes:no),skipped=body(operator==='&&='?no:yes);
+    assert.ok(write[0].includes('domain.array_read')&&write[0].includes(at(rhs.range)));
+    const [,replacement]=/(%\w+) = /u.exec(write[0]);
+    assert.ok(write[1].includes('domain.array_store')&&write[1].includes('('+array+', '+indexValue+', '+replacement+')'));
+    assert.ok(skipped[0].includes('cf.br')&&skipped[0].includes('('+oldResult+' : i1)'));
+  }
+});
+
+test('a mandatory logical assignment RHS failure blocks the later return while a skipped RHS keeps it',async()=>{
+  const cases=[['&&=','true',true],['&&=','false',false],['||=','false',true],['||=','true',false]];
+  for(const [operator,prior,required] of cases)for(const literalTail of [false,true]){
+    const packet=await retainedPacket('typed-array-actual-v8/aa472de340f45c64b9b63c95cd7765ab411f657f86b86e553d7cb0c2b7d2e7fc-package.json',
+      'f7d74ee04bb005a4df17a65e49f31b728ce7432961847523e5cdce62464a6fa2');
+    const {payload}=packet,fn=payload.functions[0],file=payload.files.find(row=>row.path===payload.rootFile);
+    const returned=literalTail?'true':'a[0]',source=file.content=
+      'export function read():bool{const a:bool[]=[true];let x:bool='+prior+';x'+operator+'a[1];return '+returned+';}\n';
+    const span=(text,from=0)=>{
+      const start=source.indexOf(text,from);
+      assert.ok(start>=0,text);
+      return {start,end:start+text.length};
+    };
+    fn.declarationRange={start:0,end:source.length-1};
+    fn.id=sha256('tsfg.array-facts.function.v8\0'+canonical({sourcePath:file.path,declarationRange:fn.declarationRange}));
+    fn.returnAnnotationRange=span('bool');
+    fn.parameters=[];
+    const boolean=(token,range)=>({kind:'booleanLiteral',type:'bool',flowType:'bool',token,range});
+    const bind=(name,text,annotation,writable)=>{
+      const declarationRange=span(text),nameRange={start:declarationRange.start,end:declarationRange.start+1},
+        annotationRange=span(annotation,nameRange.end),declaredType=name==='a'?'array<bool>':'bool';
+      return {id:originId(file.path,nameRange),name,kind:'local',nameRange,declarationRange,annotationRange,
+        elementAnnotationRange:name==='a'?span('bool',annotationRange.start):null,declaredType,writable};
+    };
+    const a=bind('a','a:bool[]=[true]','bool[]',false),x=bind('x','x:bool='+prior,'bool',true);
+    fn.bindings=[a,x];
+    const read=(token,range)=>({kind:'checkedElementAccess',type:'bool',flowType:'bool',range,
+      receiver:{kind:'bindingReference',type:a.declaredType,flowType:a.declaredType,binding:a.id,range:{start:range.start,end:range.start+1}},
+      index:{kind:'numericLiteral',type:'u32',flowType:'u32',token,decimal:token,range:{start:range.start+2,end:range.start+3}}});
+    const allocation=span('[true]'),assignment=span('x'+operator+'a[1]'),rhs=read('1',span('a[1]')),
+      tail=span('return '+returned+';');
+    fn.body=[
+      {kind:'constDeclaration',binding:a.id,range:a.declarationRange,initializer:{kind:'arrayLiteral',type:a.declaredType,
+        flowType:a.declaredType,range:allocation,allocationSite:sha256('tsfg.array-facts.allocation.v8\0'+canonical({
+          sourcePath:file.path,declarationRange:allocation})),elements:[boolean('true',span('true',allocation.start))]}},
+      {kind:'letDeclaration',binding:x.id,range:x.declarationRange,initializer:boolean(prior,span(prior,x.annotationRange.end))},
+      {kind:'expression',range:{...assignment,end:assignment.end+1},value:{kind:'bindingAssignment',type:'bool',flowType:'bool',
+        range:assignment,operator,operatorRange:span(operator,assignment.start),
+        target:{kind:'bindingTarget',type:'bool',binding:x.id,range:{start:assignment.start,end:assignment.start+1}},value:rhs}},
+      {kind:'return',range:tail,value:literalTail?boolean('true',span(returned,tail.start)):read('0',span(returned,tail.start))}
+    ];
+    payload.exports[0].functionId=fn.id;
+    payload.entryCompatibilityRoots=[];
+    const {hir,context,publication}=buildDerivedPacket(packet,file);
+    const plan=buildFiniteCoreDomains(hir,context,{publicationContext:publication}).reached,root=hir.functions[0].id;
+    const status=suffix=>plan.arrayReaching.reads.find(row=>row.node===root+suffix)?.status;
+    assert.equal(status('/body/2/expression/value'),required?'missing':'pending');
+    if(!literalTail)assert.equal(status('/body/3/value'),required?'pending':'proven');
+    const result=plan.nodes.find(row=>row.id===root+'/return'),domain=plan.domains.find(row=>row.id===result?.domainId);
+    assert.deepEqual(domain?.actualTypes??[],required?[]:[scalarTypeIds.bool]);
+  }
 });

@@ -3,7 +3,7 @@
 // Unknown aliases/callees retain pending; capacity bounds remain independent.
 import {canonical,i32TypeId,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
-import {finitePresence,isArrayNullishAssignment,isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
+import {finitePresence,isArrayNullishAssignment,isBooleanAssignment,isFieldNullishAssignment,isLocalBooleanAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 import {createArrayCallContexts} from './finite-array-call-contexts.mjs';
 import {booleanLiteral} from './finite-field-effects.mjs';
 import {finiteBranchEffects,finiteNumericUse} from './finite-numeric-use.mjs';
@@ -56,7 +56,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
     presence=finitePresence(plan,types,charge),carriers=new Map();
   for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
   const failedInitializers=new Map(),failedConstructions=new Set(),failedSuperArguments=new Map(),
-    terminalNumericUses=new Set(),terminalNumericConstructions=new Set(),localNumericSources=new Map();
+    terminalNumericUses=new Set(),terminalNumericConstructions=new Set(),localNumericSources=new Map(),logicalRhsFailures=new Map();
   const constructors=[],ordinary=[];
   let contextWrites=new Map(),terminalReads=null;
   function arrayCarrier(id) {
@@ -325,9 +325,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
             if(terminal&&recordReads){charge();(terminalReads??=new Set()).add(old);}
             if(constructionEvaluation||terminal)return {terminal:true,trap:old};
           }
-          if(isArrayNullishAssignment(value)) {
+          if(isArrayNullishAssignment(value)||isBooleanAssignment(value)) {
             if(!collectAll&&status==='missing')return {symbol:path};
-            const {present,absent}=collectAll?{present:true,absent:true}:presence(old);
+            const {present,absent}=collectAll||isBooleanAssignment(value)?{present:true,absent:true}:presence(old);
             if(!absent)return {symbol:path};
             const memory=present?clone(state):state,locals=present?copyBindings(bindings):bindings;
             const rhs=expression(value.value,path+'/value',memory,locals,present?false:root);
@@ -360,8 +360,9 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         if(value.kind==='arrayStoreDenseChecked'){rememberSlotValue(id,value.value,rhs);return rhs;}
         return {symbol:path};
       }
-      const coalescingAssignment=isLocalNullishAssignment(value);
-      if(!coalescingAssignment&&(value.kind==='assignment'||value.kind==='update')) {
+      const coalescingAssignment=isLocalNullishAssignment(value),booleanAssignment=isLocalBooleanAssignment(value),
+        conditionalAssignment=coalescingAssignment||booleanAssignment;
+      if(!conditionalAssignment&&(value.kind==='assignment'||value.kind==='update')) {
         const binding=value.target.binding,old=bindings.get(binding),checked=plan.localNumericInputs?.has(path),
           update=value.kind==='update';
         if(!collectAll&&recordReads&&checked&&old?.valueNode){
@@ -459,26 +460,39 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         }
         return ordinal!==null&&ordinal!==undefined&&consistent?actual[ordinal]??{}:{symbol:path};
       }
-      if(coalescingAssignment||value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
-        const binding=coalescingAssignment?value.target.binding:null,
-          leftNode=path+(coalescingAssignment?'/old-value':'/left'),rightKey=coalescingAssignment?'value':'right',
+      if(conditionalAssignment||value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
+        const binding=conditionalAssignment?value.target.binding:null,
+          leftNode=path+(conditionalAssignment?'/old-value':'/left'),rightKey=conditionalAssignment?'value':'right',
           left=binding===null?child('left'):(bindings.get(binding)??{symbol:leftNode});
         if(left.terminal)return left;
         const nullish=coalescingAssignment||value.operator==='??',
-          literal=nullish?null:booleanLiteral(value.left,charge),truth=literal?.value??left.truth;
+          literal=nullish||booleanAssignment?null:booleanLiteral(value.left,charge),truth=literal?.value??left.truth,
+          rightOnTrue=value.operator==='&&'||value.operator==='&&=';
         const possibilities=collectAll?{present:true,absent:true}:nullish?presence(leftNode):
-          {present:truth===undefined||truth===(value.operator==='||'),absent:truth===undefined||truth===(value.operator==='&&')};
+          {present:truth===undefined||truth!==rightOnTrue,absent:truth===undefined||truth===rightOnTrue};
         const evaluateRight=(memory,locals,mode)=>{
           const from=path+'/'+rightKey,result=expression(value[rightKey],from,memory,locals,mode);
           if(binding!==null&&!result.terminal)locals.set(binding,bindingValue(result,from,binding,value.target.type));
           return result;
         };
-        const resultValue=result=>{if(possibilities.absent&&!nullish)forgetAssignedTruth(value.right,bindings);
-          return nullish?adapt(result,result.symbol,path):{symbol:path};};
+        const recordLogicalRhs=trap=>{
+          if(!booleanAssignment||collectAll||!recordReads)return;
+          charge();
+          // Every evaluated occurrence must select the same first failure.
+          logicalRhsFailures.set(path,!logicalRhsFailures.has(path)||logicalRhsFailures.get(path)===trap?trap:null);
+        };
+        const resultValue=result=>{
+          recordLogicalRhs(null);
+          if(possibilities.absent&&!nullish)forgetAssignedTruth(value[rightKey],bindings);
+          return nullish?adapt(result,result.symbol,path):{symbol:path};
+        };
         if(!possibilities.absent)return resultValue(left);
         if(!possibilities.present) {
-          const result=evaluateRight(state,bindings,nullish||literal!==null?root:false);
-          return result.terminal?result:resultValue(result);
+          const result=evaluateRight(state,bindings,nullish||booleanAssignment||literal!==null?root:false);
+          if(!result.terminal)return resultValue(result);
+          const from=path+'/'+rightKey,trap=result.trap;
+          recordLogicalRhs(trap===from||trap?.startsWith(from+'/')?trap:null);
+          return result;
         }
         const right=clone(state),branchBindings=copyBindings(bindings),
           result=evaluateRight(right,branchBindings,false);
@@ -511,8 +525,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const receiver=expression(value.target.receiver,path+'/target/receiver',state,bindings,root);
         if(receiver.terminal)return receiver;
         if(value.kind==='fieldUpdate')return (plan.storageNumericUpdates?.has(path)?terminalNumericUse(path,false):null)??{symbol:path};
-        if(isFieldNullishAssignment(value)){
-          const {present,absent}=collectAll?{present:true,absent:true}:presence(path+'/old-value');
+        if(isFieldNullishAssignment(value)||isBooleanAssignment(value)){
+          const {present,absent}=collectAll||isBooleanAssignment(value)?{present:true,absent:true}:presence(path+'/old-value');
           if(!absent)return {symbol:path};
           if(!present)return child('value');
           const memory=clone(state),locals=copyBindings(bindings);
@@ -735,7 +749,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   let before;
   do {
     charge();before=ledger();reads.clear();normalReadSources.clear();failedInitializers.clear();failedConstructions.clear();failedSuperArguments.clear();
-    terminalNumericUses.clear();terminalNumericConstructions.clear();localNumericSources.clear();
+    terminalNumericUses.clear();terminalNumericConstructions.clear();localNumericSources.clear();logicalRhsFailures.clear();
     contextWrites=new Map();terminalReads=null;
     for(const [id,row] of canonicalReads){charge();reads.set(id,row);}
     for(const fn of ordered) {
@@ -755,6 +769,8 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
   }while(before!==ledger());
   const reaching=own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
+  const terminalLogicalAssignments=new Map();
+  for(const [site,trap] of logicalRhsFailures){charge();if(trap)terminalLogicalAssignments.set(site,trap);}
   return {reaching,terminalReads,normalReadSources,failedInitializers,failedConstructions,failedSuperArguments,
-    terminalNumericUses,terminalNumericConstructions,localNumericSources};
+    terminalNumericUses,terminalNumericConstructions,localNumericSources,terminalLogicalAssignments};
 }

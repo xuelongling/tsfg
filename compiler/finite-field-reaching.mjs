@@ -6,7 +6,7 @@ import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
 import {finiteBranchEffects} from './finite-numeric-use.mjs';
-import {finitePresence,isArrayNullishAssignment,isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
+import {finitePresence,isArrayNullishAssignment,isBooleanAssignment,isFieldNullishAssignment,isLocalBooleanAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 import {createFieldReturnGraphs} from './finite-field-return-graphs.mjs';
 import {createFieldCallContexts,finiteFieldEffects,finiteFieldStorePath,finiteFieldWriteVersion,
   literalBooleanRhs,literalIfArm,literalLoopCondition} from './finite-field-effects.mjs';
@@ -52,7 +52,7 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
   // Core retains the original store instructions across these cuts. Their
   // lexical versions belong to the emitted inventory, outside ordered state.
   const keepLexicalWrites=Boolean(terminalReads||plan.terminalNumericUses?.size||plan.failedInitializers?.size||
-    plan.failedConstructions?.size||plan.failedSuperArguments?.size);
+    plan.failedConstructions?.size||plan.failedSuperArguments?.size||plan.terminalLogicalAssignments?.size);
   const {effects,sites,recursive,cyclicFunctions}=finiteFieldEffects(hir,plan,callables,phases,charge,lexicalWrites,keepLexicalWrites);
   if(!keepLexicalWrites)for(const [id,version]of lexicalWrites){charge();writes.set(id,version);}
   for(const [site,row]of sites)contexts.set(site,{...row,fields:new Map()});
@@ -285,8 +285,8 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
       const child=key=>expression(value[key],path+'/'+key,state,env);
       if(value.kind==='reference')return env.get(value.binding)??null;
       if(['group','nonNull','assertType'].includes(value.kind))return child('operand');
-      const coalescingAssignment=isLocalNullishAssignment(value);
-      if(value.kind==='assignment'&&!coalescingAssignment) {
+      const conditionalAssignment=isLocalNullishAssignment(value)||isLocalBooleanAssignment(value);
+      if(value.kind==='assignment'&&!conditionalAssignment) {
         const token=child('value');
         if(plan.terminalNumericUses?.has(path))stopped=true;
         if(stopped)return null;
@@ -327,8 +327,8 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         const token=expression(value.target.receiver,path+'/target/receiver',state,env),store=finiteFieldStorePath(path,value);
         if(stopped)return null;
         if(store!==path)access(value,path+'/old-value',state,token,'read');
-        if(isFieldNullishAssignment(value)){
-          const {present,absent}=presence(path+'/old-value');
+        if(isFieldNullishAssignment(value)||isBooleanAssignment(value)){
+          const {present,absent}=isBooleanAssignment(value)?{present:true,absent:true}:presence(path+'/old-value');
           if(!absent)return null;
           const memory=present?clone(state):state,locals=present?copyFieldReachingAliases(env,charge):env;
           expression(value.value,path+'/value',memory,locals);
@@ -350,23 +350,30 @@ export function buildFiniteFieldReaching(hir,plan,charge,terminalReads=null) {
         const payload=copiesValue(value.value.type)?copyToken(rhs,path+'/stored-copy',state):rhs;
         access(value,store,state,token,'store',payload);return rhs;
       }
-      const coalescingArray=isArrayNullishAssignment(value);
-      if(coalescingArray||coalescingAssignment||value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
-        const binding=coalescingAssignment?value.target.binding:null,assignment=coalescingArray||coalescingAssignment;
+      const coalescingArray=isArrayNullishAssignment(value),optionalArray=coalescingArray||
+        value.kind==='arrayCompoundAssignment'&&isBooleanAssignment(value);
+      if(optionalArray||conditionalAssignment||value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
+        const binding=conditionalAssignment?value.target.binding:null,assignment=optionalArray||conditionalAssignment;
         let left=null;
-        if(coalescingArray) {
+        if(optionalArray) {
           expression(value.target.receiver,path+'/target/receiver',state,env);
           expression(value.target.index,path+'/target/index',state,env);
           if(trapSource===path+'/old-value')stopped=true;
         }else left=binding===null?child('left'):(env.get(binding)??null);
         if(stopped)return null;
-        const nullish=assignment||value.operator==='??',
+        const nullish=coalescingArray||isLocalNullishAssignment(value)||value.operator==='??',
           possibilities=nullish?presence(path+(assignment?'/old-value':'/left')):{present:true,absent:true};
         const evaluateRight=(memory,locals)=>{
           const key=assignment?'value':'right',result=expression(value[key],path+'/'+key,memory,locals);
           if(binding!==null&&!stopped)locals.delete(binding);
           return assignment?null:result;
         };
+        const requiredTrap=plan.terminalLogicalAssignments?.get(path);
+        if(requiredTrap){
+          phaseExpression(value.value,path+'/value',state,env,requiredTrap);
+          stopped=true;
+          return null;
+        }
         if(!possibilities.absent)return left;
         if(!possibilities.present)return evaluateRight(state,env);
         const rightReached=literalBooleanRhs(value,charge);

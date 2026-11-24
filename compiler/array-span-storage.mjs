@@ -3,7 +3,7 @@
 // supplies actual Source-order completions and the selected callable graph.
 import {arrayAnalysisTypes,hasConditionalArrayRhs} from './array-analysis-types.mjs';
 import {createSpanPlanes} from './array-span-planes.mjs';
-import {isFieldNullishAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
+import {isBooleanAssignment,isFieldNullishAssignment,isLocalBooleanAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 /** @typedef {import('./array-span-planes.mjs').StoredValue} StoredValue */
 export function createSpanStorage(hir,tools,charge,authority,resolveContext=undefined,published=undefined){
   const type=arrayAnalysisTypes(hir),summaries=new Map();
@@ -339,9 +339,9 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         truncate(get([...path,'target','receiver']),value.value,changed,invalidate);
       }
       else if(value.kind==='fieldAccess')result=readStored(child('receiver'),value.property);
-      else if(value.kind==='fieldAssignment'&&!isFieldNullishAssignment(value)){
+      else if(value.kind==='fieldAssignment'&&!isFieldNullishAssignment(value)&&!isBooleanAssignment(value)){
         result=child('value');store(get([...path,'target','receiver']),value.target.property,copy(result),value.target.receiver.type);
-      }else if(isLocalNullishAssignment(value))bind(value.target.binding,unknown);
+      }else if(isLocalNullishAssignment(value)||isLocalBooleanAssignment(value))bind(value.target.binding,unknown);
       else if(value.kind==='assignment'){result=child('value');bind(value.target.binding,result);result=bindings.get(value.target.binding);}
       else if(hasConditionalArrayRhs(value))result=choice([child('left'),child('right')]);
       else if(['call','construct','superConstruct'].includes(value.kind)){

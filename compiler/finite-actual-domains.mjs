@@ -10,7 +10,7 @@ import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256,i32TypeId} from './identity.mjs';
 import {finiteNumericUpdate,finiteNumericUse,finiteNormalFlow,finiteNormalBody,finiteNormalLogical,finiteNormalCoalesce} from './finite-numeric-use.mjs';
-import {isArrayNullishAssignment,isFieldNullishAssignment,isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
+import {isArrayNullishAssignment,isBooleanAssignment,isFieldNullishAssignment,isFiniteAbsence,isLocalBooleanAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 import {actualFieldResolver,fieldReceiverView} from './member-presence.mjs';
 import {selectReferenceMethod} from './reference-methods.mjs';
 
@@ -185,12 +185,12 @@ function buildPlans(input,context,options,definitions) {
     for(;;) {
       const array=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching,...numericInputs},charge,canTerminateArrayRead);
       arrayReaching=array.reaching;terminalReads=array.terminalReads;
-      if(!arrayReaching.reads.length&&!array.terminalNumericUses.size&&!array.localNumericSources.size)break;
+      if(!arrayReaching.reads.length&&!array.terminalNumericUses.size&&!array.localNumericSources.size&&!array.terminalLogicalAssignments.size)break;
       // Even skipped stores need lexical versions from the carrier. The
       // ordered field selections continue to govern successful reads.
       const fieldPlan={...ordered,arrayReaching,carrierFields:result.fields,
         failedInitializers:array.failedInitializers,failedConstructions:array.failedConstructions,failedSuperArguments:array.failedSuperArguments,
-        terminalNumericUses:array.terminalNumericUses,terminalNumericConstructions:array.terminalNumericConstructions};
+        terminalNumericUses:array.terminalNumericUses,terminalNumericConstructions:array.terminalNumericConstructions,terminalLogicalAssignments:array.terminalLogicalAssignments};
       fieldReaching=buildFiniteFieldReaching(hir,fieldPlan,charge,allowCompoundTermination?null:terminalReads);
       const rows=[];for(const read of arrayReaching.reads){charge();const versions=[];
         for(const id of read.versions){charge();versions.push(id);}
@@ -217,11 +217,12 @@ function buildPlans(input,context,options,definitions) {
       const terminalNumericUses=[...array.terminalNumericUses].sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
       const terminalNumericConstructions=[...array.terminalNumericConstructions].sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});
       const localNumericSources=[...array.localNumericSources].sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
+      const terminalLogicalAssignments=[...array.terminalLogicalAssignments].sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
       const current=canonical([rows,fields,aliases,terminal,failedInitializers,failedConstructions,failedSuperArguments,
-        terminalNumericUses,terminalNumericConstructions,localNumericSources]);
+        terminalNumericUses,terminalNumericConstructions,localNumericSources,terminalLogicalAssignments]);
       if(current===previous)break;previous=current;
       ordered=solve(fieldReaching,{...arrayReaching,normalReadSources:array.normalReadSources,
-        localNumericSources:array.localNumericSources},terminalReads);
+        localNumericSources:array.localNumericSources,terminalLogicalAssignments:array.terminalLogicalAssignments},terminalReads);
     }
     // Refined payloads do not silently republish a narrower ABI. Representation
     // maxima retain their original finite role, separately from ordered data.
@@ -494,6 +495,10 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
       presenceCarriers.push(old);dependencies.push(...selected.dependencies);
       copy(old,id,{presentOnly:true});
       copy(selected.right,id,{gate:old});copy(selected.right,target,{gate:old});
+    }else if(isLocalBooleanAssignment(v)) {
+      const target=binding(fn,v.target.binding,v.target.type),rhs=operand(v.value,p+'/value',continuation,false);
+      if(arrayReaching?.terminalLogicalAssignments?.has(id))dependencies.push(flow.never);
+      copy(target,id);copy(rhs,id);copy(rhs,target);
     }else if(v.kind==='assignment') {
       const target=binding(fn,v.target.binding,v.target.type);
       const old=localNumericInputs.has(id)?checkedLocalOld(target):null;
@@ -575,6 +580,11 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
           },absent);
           presenceCarriers.push(old);dependencies.push(...selected.dependencies);
           copy(old,id,{presentOnly:true});copy(selected.right,value,{gate:old});result=value;
+        }else if(isBooleanAssignment(v)){
+          flow.entry(old,continuation);flow.finish(old,[]);
+          const ready=flow.normal(old),rhs=operand(v.value,p+'/value',ready,false);
+          dependencies.push(ready);
+          copy(old,id);copy(rhs,value);result=value;
         }else{
           flow.entry(old,continuation);flow.finish(old,[]);
           continuation=flow.normal(old);dependencies.push(continuation);
@@ -610,6 +620,12 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
         presenceCarriers.push(old);dependencies.push(...selected.dependencies);
         copy(old,id,{presentOnly:true});copy(selected.right,id,{gate:old});
         stored=selected.right;whenAbsent=old;
+      }else if(isBooleanAssignment(v)){
+        flow.entry(old,continuation);flow.finish(old,[]);
+        const ready=flow.normal(old);
+        dependencies.push(ready);
+        stored=operand(v.value,p+'/value',ready,false);
+        copy(old,id);copy(stored,id);
       }else{
         const numeric=finiteNumericUse(v);
         if(arrayReaching&&(numeric||checkedUpdate||terminalReads?.has(old))) {
@@ -629,7 +645,7 @@ function solveFiniteActualDomains(projection,charge,fieldReaching,mode,arrayReac
         // Keep the dead read's declared SSA carrier outside the value/owner
         // worklist. Its impossible writeback contributes no backing capacity.
         charge();representationOnly.set(old,v.target.type);
-        if(coalescing||checkedUpdate){charge();representationOnly.set(id,v.type);}
+        if(coalescing||checkedUpdate||isBooleanAssignment(v)){charge();representationOnly.set(id,v.type);}
       }else stores.push({receiver,value:stored,whenAbsent});
     }else if(v.kind==='arrayResizeChecked') {
       at(v.target.receiver,p+'/target/receiver');

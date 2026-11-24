@@ -8,7 +8,7 @@ import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
 import {booleanLiteral,finiteFieldStorePath} from './finite-field-effects.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
 import {finiteBindingWrites,finiteNumericUpdate,finiteNumericUse,finitePresenceShortCircuit,finitePresenceTest} from './finite-numeric-use.mjs';
-import {isArrayNullishAssignment,isFieldNullishAssignment,isFiniteAbsence,isLocalNullishAssignment} from './finite-presence.mjs';
+import {isArrayNullishAssignment,isBooleanAssignment,isFieldNullishAssignment,isFiniteAbsence,isLocalBooleanAssignment,isLocalNullishAssignment} from './finite-presence.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
 import {coreExchangeFormat,coreQuote as quote,emitCoreSsaFunction} from './core-ssa-emitter.mjs';
@@ -379,6 +379,18 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
       const type=checked?value.type:oldType,native=checked?'i32':domains.get(oldType).nativeType;
       return {name:api.operation('tsfg_core.constant',[],[],type,unitAttribute(native),value.range),type};
     }
+    function logicalWrite(api,value,old,write) {
+      const keep=()=>old.name;
+      const replace=()=>{
+        const rhs=api.emit(wrap(value.value,old.type));
+        write({name:rhs,type:old.type});
+        return rhs;
+      };
+      if(domains.get(old.type).nativeType!=='bool'||old.type!==value.type)
+        pending('operation-domain-check mapping',value.range);
+      return value.operator==='&&='?api.branchValue(old.name,value.type,value.range,replace,keep)
+        :api.branchValue(old.name,value.type,value.range,keep,replace);
+    }
     function arrayMutationOperands(api,value) {
       const receiver={name:api.emit(value.target.receiver),type:value.target.receiver.type},
         index={name:api.emit(value.target.index),type:value.target.index.type};
@@ -551,8 +563,9 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         }
         const coalescingArray=isArrayNullishAssignment(value);
         if(!coalescingArray&&(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate')) {
-          const {receiver,index,old}=arrayMutationOperands(api,value),oldType=old.type,
-            update=value.kind==='arrayUpdate',rhsType=update?oldType:value.value.type;
+          const {receiver,index,old}=arrayMutationOperands(api,value);
+          if(isBooleanAssignment(value))return logicalWrite(api,value,old,rhs=>writeArraySlot(api,value,receiver,index,rhs));
+          const oldType=old.type,update=value.kind==='arrayUpdate',rhsType=update?oldType:value.value.type;
           const operator=update?(value.operator==='++'?'+':value.operator==='--'?'-':''):value.operator.slice(0,-1),
             native=domains.get(oldType).nativeType,checked=requiresNumericChecks(value,update?[oldType]:[oldType,rhsType]);
           if(checked?domains.get(value.type).nativeType!=='i32':native==='bool'||value.type!==oldType||
@@ -567,6 +580,8 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
         const coalescingAssignment=isLocalNullishAssignment(value);
         if(value.kind==='assignment'&&!coalescingAssignment) {
           const binding=value.target.binding,target=selected(fn.id+'/binding/'+binding).domainId;
+          if(isLocalBooleanAssignment(value))
+            return logicalWrite(api,value,{name:api.lookup(binding),type:target},rhs=>api.assign(binding,rhs.name));
           if(value.operator&&value.operator!=='=') {
             const operator=value.operator.slice(0,-1),native=domains.get(target).nativeType,rhsType=value.value.type,
               checked=requiresNumericChecks(value,[target,rhsType]);
@@ -712,6 +727,10 @@ export function prepareFiniteCore(input,context,publicationContext=undefined) {
           opAttrs(value)+', '+fieldDispatch(value),value.range);
         if(value.kind==='fieldAssignment'||value.kind==='fieldUpdate') {
           const receiver=evaluated(value.target.receiver),store=finiteFieldStorePath(value.domainNode,value),update=value.kind==='fieldUpdate';
+          if(isBooleanAssignment(value)){
+            const old=readOldField(api,value,receiver);
+            return logicalWrite(api,value,old,rhs=>writeField(api,value,receiver,rhs,value.value.semanticType,value.value.range));
+          }
           let rhs,semanticType,range,previous;
           if(store===value.domainNode) {
             ({semanticType,range}=value.value);
