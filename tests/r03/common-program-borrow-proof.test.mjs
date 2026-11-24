@@ -161,6 +161,39 @@ test('genuine Borrow root evidence charges heap visits and indexes each root hea
   assert.deepEqual({scalarVisitsPaid:scalar.work>=scalar.minimum,spanHeapPasses:span.passes},
     {scalarVisitsPaid:true,spanHeapPasses:2});
 });
+test('Borrow work covers materializing call and flow rows as well as sorting them',()=>{
+  const {hir,publication}=completed,records=new Map(publication.contracts.map(row=>[row.functionId,row]));
+  const {values:{actual}}=commonProgramPhysical(hir,records),roots=[...actual.contexts.values()].filter(row=>row.root);
+  const caller=roots.find(row=>row.plan.owner.name==='borrowCompletions');
+  const originalCallee=roots.find(row=>row.plan.owner.name==='relayBorrowCompletion');
+  assert.ok(caller&&originalCallee);
+  const callee={...originalCallee,root:false};
+  const call=caller.plan.graph.blocks.flatMap(block=>block.instructions).find(op=>op.properties.function_id===callee.plan.owner.id);
+  const returned=callee.plan.graph.blocks.flatMap(block=>block.instructions).find(op=>op.name==='func.return');
+  assert.ok(call&&returned);
+  const block=caller.plan.graph.blocks.findIndex(row=>row.name===call.successors[0]);
+  const next=caller.plan.graph.blocks[block].instructions[0];
+  const callAt=caller.id+'/observed-call',returnAt=callee.id+'/observed-return';
+  const measure=(complete,flow)=>{
+    let work=0;
+    const proof=commonBorrowEvents({model:{spend:(amount=1)=>{work+=amount;}},objects:actual.objects,cyclicFunctions:new Set()});
+    proof.begin(caller,caller.entryHeap);proof.begin(callee,callee.entryHeap);
+    proof.before(caller,call,callAt);proof.before(callee,returned,returnAt);
+    proof.blockSite(caller.plan.owner.id,call.successors[0],{functionId:caller.plan.owner.id,block,index:0,
+      name:next.name.replace('tsfg_program.',''),source:{path:caller.plan.owner.sourcePath,...next.range}});
+    proof.call(callAt,callee,caller,call.successors);
+    if(complete)proof.after(callee,returned,{refs:new Set()},returnAt);
+    if(flow)proof.edge(caller.id+'/entry',callAt);
+    work=0;
+    const events=proof.finish();
+    return {work,calls:events.calls.length,flows:events.flows.length};
+  };
+  const pending=measure(false,false),normal=measure(true,false),flow=measure(true,true);
+  assert.deepEqual([pending.calls,normal.calls,flow.flows],[0,1,1]);
+  // Sorting charges one row read and one table slot. Each emitted row also
+  // pays for materialization, and the flow pays for its traversed edge.
+  assert.deepEqual([normal.work-pending.work,flow.work-normal.work],[3,4]);
+});
 for(const field of ['publication','request'])test('public Common Borrow proof owns '+field+' before artifact admission',{skip:!tool},async()=>{
   const publication=structuredClone(safe.publication),request=structuredClone(safe.request);
   const pending=compileCommonBorrowProof(safe.hir,publication,request,{core:tool});

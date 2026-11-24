@@ -94,7 +94,9 @@ export function commonBorrowEvents({model,objects,cyclicFunctions}){
         fixed.add(row.at+'/fixed-return/'+completion);const block=row.successors[index],physical=blockSites.get(caller.plan.owner.id+'\0'+block);
         check(physical,'borrow-proof','call completion lacks a printed Core operation');
         const successor={context:row.caller,site:physical,kind:'operation',completion:null,alias:true},key=row.caller+'/block/'+block;locations.set(key,successor);relevant.add(key);
-        for(const at of points(row.at))for(const end of points(exit))for(const next of points(key))callsOut.push({at,target:callee.plan.owner.id,completion,exit:end,successor:next});
+        for(const at of points(row.at))for(const end of points(exit))for(const next of points(key)){
+          spend();callsOut.push({at,target:callee.plan.owner.id,completion,exit:end,successor:next});
+        }
       }
     }
     const effectsOut=new Map();for(const row of effects){if(row.fixed&&!fixed.has(row.at))continue;relevant.add(row.at);
@@ -106,7 +108,7 @@ export function commonBorrowEvents({model,objects,cyclicFunctions}){
         spend();const to=pending[i];if(seen.has(to))continue;seen.add(to);
         if(relevant.has(to)){for(const start of points(from))for(const end of points(to)){
           if((locations.get(from).alias||locations.get(to).alias)&&canonical(start)===canonical(end))continue;
-          flows.push({from:start,to:end});}}
+          spend();flows.push({from:start,to:end});}}
         else for(const next of edges.get(to)??[])pending.push(next);check(pending.length<=65536,'limit');
       }
     }
