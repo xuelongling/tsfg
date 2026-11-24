@@ -101,13 +101,23 @@ test('compiler CLI emits the verified GPU plan from owned HIR and bounded input 
       assert.match(rejected.stderr,/^r03-cli-options:/);
     }
   });
-  await t.test('a missing GPU binding is rejected before output',async()=>{
-    const invalid=await save('missing-binding',changed(value=>{value.bindings.pop();}));
+  await t.test('a missing GPU parameter reports its original Source range',async()=>{
+    const invalid=await save('missing-binding',changed(value=>{value.bindings.splice(1,1);}));
     const rejected=run([...args,'--gpu-request',invalid]);
     assert.equal(rejected.error,undefined);
     assert.equal(rejected.status,2);
     assert.equal(rejected.stdout,'');
-    assert.match(rejected.stderr,/^r03-common-program-gpu-coverage:/);
+    assert.equal(rejected.stderr,
+      'r03-common-program-gpu-coverage: logical GPU resources do not cover the selected fixed access set (/src/main.ts:328:334)\n');
+  });
+  await t.test('a declared function outside the GPU group reports its own Source range',async()=>{
+    const invalid=await save('outside-group',changed(value=>{value.kernels.push(unverified.id);}));
+    const rejected=run([...args,'--gpu-request',invalid]);
+    assert.equal(rejected.error,undefined);
+    assert.equal(rejected.status,2);
+    assert.equal(rejected.stdout,'');
+    assert.equal(rejected.stderr,
+      'r03-common-program-gpu-kernel: logical GPU target is outside the verified kernel group (/src/main.ts:175:246)\n');
   });
   await t.test('oversize GPU request is rejected at the file boundary',async()=>{
     const invalid=await save('oversized',request);

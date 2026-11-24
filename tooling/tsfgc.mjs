@@ -180,6 +180,9 @@ try {
   }
 } catch (error) {
   const chain=error instanceof Error&&'callChain' in error?'; callChain='+canonical(error.callChain):'';
-  process.stderr.write(`${error.message}${chain}\n`);
+  const primary=error instanceof Error&&'ruleId' in error&&error.ruleId==='r01-gpu'&&'primary' in error
+    ?/** @type {import('../compiler/common-program-gpu-bindings.mjs').GpuSource|undefined} */(error.primary):undefined;
+  const source=primary?` (${primary.sourceId}:${primary.start}:${primary.end})`:'';
+  process.stderr.write(`${error.message}${source}${chain}\n`);
   process.exitCode = 2;
 }
