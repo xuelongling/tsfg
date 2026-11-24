@@ -11,7 +11,7 @@ export { compilePackageHir };
 import { buildHir, lowerHir, lowerFormalHir, prepareCommonCore } from "./hir.mjs";
 import { canonical, own, sha256 } from "./identity.mjs";
 import {readSystemQueryFactsAndContext} from './system-query-facts.mjs';
-import {checkQueryBatchSource,checkQueryLlvmDialect,emitSystemQueryCore,escapeQueryCompilerBytes,systemQuerySystemIdentity} from './system-query-core.mjs';
+import {checkQueryBatchSource,checkQueryCoreSource,checkQueryLlvmDialect,emitSystemQueryCore,escapeQueryCompilerBytes,systemQuerySystemIdentity} from './system-query-core.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
 import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
 import {commonProgramCore,requireCommonCoreSelection} from './common-program-core.mjs';
@@ -250,6 +250,7 @@ function checkQueryLlvmEntries(llvm,facts,format){
 export function readQueryCompilerOutputs(facts,sourceContext,coreBytes,options,consumeQuery){
   const core=decodeQueryCompilerText(coreBytes,'core');
   requireCheckedCoreInput(core,facts.inputIdentity,'r10-system-query-core');
+  checkQueryCoreSource(core,facts,sourceContext);
   const {effects:includeEffects,cpuBatch:includeBatch,cpuLLVM:llvmOutput,tmeta:includeTmeta}=options;
   const effects=includeEffects?readSystemQueryEffects(consumeQuery('--effects',core),facts,sourceContext):undefined;
   const needsCheckedBatch=includeBatch||includeTmeta||llvmOutput!==undefined;
