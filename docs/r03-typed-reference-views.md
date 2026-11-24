@@ -37,9 +37,10 @@ storage version. Unknown members are rejected, never encoded as missing.
 The version 1 producer remains confined to the existing nonoptional profile and
 its actual-slot-only grammar; changing a version 2 magic to version 1 is invalid.
 
-`managed-reference-view.present` uses this same member resolution, returning
-false for legitimate structural absence and `ManagedHeap.hasTypedField` for an
-actual field. A field defined with undefined remains present. Missing reads
+`managed-reference-view.present` uses this same member resolution. It returns
+false for legitimate structural absence and reads the actual field's
+initialization bit directly from its owning cell without allocating. A field
+defined with undefined remains present. Missing reads
 return owned native undefined with zero bytes and zero references. The existing
 backing capture retains missing provenance and revalidates it on copy, including
 declared assignment permission. Explicit writes use declared types; the wider
