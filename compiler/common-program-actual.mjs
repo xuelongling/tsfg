@@ -396,7 +396,8 @@ export function analyzeCommonGraphs({model,plans},records=null,options=/** @type
               const owners=a.empty();let spanOwner=false;for(const ref of args[0].refs){spend();const object=objects.get(ref);check(object,'ssa');
                 if(types.get(object.type)?.kind==='readSpan'){spanOwner=true;a.merge(owners,state.heap.get(ref+'/owner')??a.empty());}else owners.refs.add(ref);}
               const ownerRegion=spanOwner?regions.load(args[0].region,'owner',state.regions):args[0].region;
-              const needsArray=name==='array_read'&&types.get(op.view)?.kind==='function'||name==='array_store'&&Boolean(observer)&&args[2].pairs.size>0,
+              const needsArray=name==='array_read'&&(op.view===boolTypeId||types.get(op.view)?.kind==='function')
+                  ||name==='array_store'&&Boolean(observer)&&args[2].pairs.size>0,
                 actualArray=needsArray&&commonActualArrayReceiver(args[0],types,objects,spend),covered=name==='array_store'&&Boolean(observer)&&(storedArray||actualArray&&holdingPolicy.wholeValue(args[2]));
               if(observer&&name==='array_store'&&(args[0].unknown||!args[0].refs.size))hardEscape(args[2]);
               for(const ref of owners.refs){spend();const object=objects.get(ref),index=args[1]?.number,selected=regions.select(ownerRegion,ref);
@@ -406,7 +407,7 @@ export function analyzeCommonGraphs({model,plans},records=null,options=/** @type
                 for(const [slot,stored]of state.heap){spend();if(slot.startsWith(ref+'/element/'))a.merge(value,stored);}
                 // Presence is a separate whole-family Source proof. It cannot
                 // remove undefined already present in the actual stored value.
-                const initialized=actualArray&&!spanOwner&&Number.isSafeInteger(index)&&index>=0&&types.get(op.view)?.kind==='function'&&model.callables.arrayElementInitialized(object.type,index);
+                const initialized=actualArray&&!spanOwner&&!args[1].unknown&&Number.isSafeInteger(index)&&index>=0&&model.callables.arrayElementInitialized(object.type,index);
                 if(!initialized)value.tags.add(undefinedId);
               }
               if(name==='array_read')value.region=regions.elements(ownerRegion,args[1].number,state.regions);

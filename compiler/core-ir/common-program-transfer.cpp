@@ -210,7 +210,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(!conditional&&!regionStore(*this,regionValue(*this,value),"/owner",regionValue(*this,args[0]),state.regions))return false;
   }else if(name=="array_length"||name=="readspan_length")value=literal(op.view);
   else if(name=="array_read"||name=="array_store"||name=="array_resize"){
-    const bool actualArray=name=="array_read"&&types.count(op.view)&&string(field(*types.at(op.view),"kind"))=="function"&&arrayReceiver(args[0]);
+    const bool actualArray=name=="array_read"&&
+      (op.view==typeId("bool")||(types.count(op.view)&&string(field(*types.at(op.view),"kind"))=="function"))&&arrayReceiver(args[0]);
     const bool transport=!conditional&&name=="array_store"&&(storeCovered||holdingArrayTransport(*this,args[0],args[2]));
     if(!e.message.empty())return false;
     RegionValue projected;

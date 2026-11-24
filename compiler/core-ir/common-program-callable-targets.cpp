@@ -386,7 +386,9 @@ struct TargetFlow {
     }else if(kind=="call"&&string(field(value,"callee"))=="intrinsic:readSpan"){
       const auto &args=items(field(value,"arguments"));if(!args.empty())arrays.link(string(field(args[0],"type")),id);
     }else if(type!=types.end()&&(string(field(*type->second,"kind"))=="array"||string(field(*type->second,"kind"))=="readSpan")&&
-      kind!="bindingReference"&&kind!="parentheses"&&kind!="nonNull"&&kind!="bindingAssignment"&&kind!="fieldAssignment"&&kind!="elementAssignment")expose(id);
+      kind!="bindingReference"&&kind!="parentheses"&&kind!="nonNull"&&kind!="bindingAssignment"&&kind!="fieldAssignment"&&kind!="elementAssignment"&&
+      !(kind=="bindingTarget"&&string(field(*type->second,"kind"))=="array"&&
+        string(field(*type->second,"elementType"))==digest(std::string("tsfg.type")+std::string(1,'\0')+"bool")))expose(id);
     if(kind=="lengthAssignment")arrays.cancel(string(field(field(field(value,"target"),"receiver"),"type")));
     for(const auto &entry:*object){if(!step())return;auto key=entry.first.str();if(key!="range"&&key!="signature"&&key!="sourceSignature"&&key!="compatibilityRoots")scan(entry.second,defaults);}
   }

@@ -44,7 +44,7 @@ for(const [name,start,end]of [['wrong-owner-alternative-conflict',1760,1778],['d
 
 // Whole checked component variant of the original distinct Code+Env packet.
 // Only the last application body and its source-dependent identities change.
-function reassignmentProgram(mode,family='local'){
+function reassignmentProgram(mode,family='local',shape='filled'){
   const donor=fs.readFileSync(new URL('./testdata/common-aggregate-callables/different-code-match-safe.json',import.meta.url));
   assert.equal(sha256(donor),'sha256:b2b2861cd5fa38e438a5d910d6f52340c53cf7f2e4f36c49c334e10b0e77ddcd');
   const packet=structuredClone(readCommonProgramFacts(donor)),p=packet.payload,root=p.rootFile;
@@ -58,11 +58,16 @@ function reassignmentProgram(mode,family='local'){
   const valueType=logicalAssignment?'bool':'i32',initialToken=logicalAssignment?'false':'0';
   const receiverValue=logicalAssignment?comparison:call,rhsText=order?(logicalAssignment?'f() === 0':'f()'):receiverValue;
   const left=order?'(values = ['+receiverValue+'])[0]':{local:'gate',global:'leftTotal',field:'new Box().n',element:'values[0]'}[family];
+  const external=shape==='external';
+  const initialArray=shape==='empty'?'[]':'['+initialToken+']';
   const declaration=family==='local'?'let gate: i32 = 0;':
-    (order?'let':'const')+' values: '+valueType+'[] = ['+initialToken+'];';
+    (order||external?'let':'const')+' values: '+valueType+'[] = '+initialArray+';';
+  const resize=shape==='resized'?'const alias: bool[] = values;\n  alias.length = 0;\n  ':'';
   const effect=stored?left+' '+mode+' '+rhsText+';':unconditional?comparison+';':branch?'if (flag) { '+comparison+'; }':'flag '+mode+' ('+comparison+');';
-  file.content=file.content.slice(0,bodyStart)+'\n  let f: () => i32 = makeFirstReader();\n  '+
-    (stored&&(family==='local'||family==='element'||order)?declaration+'\n  ':'')+effect+'\n  return f();\n}\n';
+  const parameter=', incoming: bool[]';
+  const extra=external?parameter.length:0,paramEnd=fn.parameters[0].declarationRange.end;
+  file.content=file.content.slice(0,paramEnd)+(external?parameter:'')+file.content.slice(paramEnd,bodyStart)+'\n  let f: () => i32 = makeFirstReader();\n  '+
+    (stored&&(family==='local'||family==='element'||order)?declaration+'\n  ':'')+resize+(external?'values = incoming;\n  ':'')+effect+'\n  return f();\n}\n';
   const span=(start,end)=>({start,end});
   const locate=(text,start=bodyStart)=>{const index=file.content.indexOf(text,start);assert.ok(index>=0,text);return span(index,index+text.length);};
   fn.declarationRange.end=file.content.length-1;
@@ -86,6 +91,7 @@ function reassignmentProgram(mode,family='local'){
       operator:'=',operatorRange:locate('=',target.start),value:direct(second,secondInit)});
   const callee=grouped(assignment),called=indirect(callee,span(callee.range.start,callee.range.end+2));
   let statement,outerRhs=null;
+  /** @type {typeof fn.body} */
   const body=[{kind:'letDeclaration',binding,range:declarationRange,initializer:direct(first,firstInit)}];
   const initialValue=(type,range)=>type==='bool'?expr('booleanLiteral',type,range,{token:initialToken}):
     expr('numericLiteral',type,range,{token:'0',decimal:'0'});
@@ -110,17 +116,44 @@ function reassignmentProgram(mode,family='local'){
       kind='fieldAssignment';
       target={kind:'fieldTarget',type:'i32',range:location,property:member.id,nameRange:span(location.end-1,location.end),receiver};
     }else{
-      const name='values',nameRange=locate(name,declarationRange.end),id=originId(root,nameRange),initial=locate('['+initialToken+']',nameRange.end);
-      const annotationRange=locate(valueType+'[]',nameRange.end),range=span(nameRange.start,initial.end),type='array<'+valueType+'>';
+      const name='values',nameRange=locate(name,declarationRange.end),id=originId(root,nameRange);
+      const annotationRange=locate(valueType+'[]',nameRange.end),initial=locate(initialArray,annotationRange.end);
+      const range=span(nameRange.start,initial.end),type='array<'+valueType+'>';
       if(logicalAssignment){
         // The Array declaration is the same owned minimal-arrays-v8.d.ts.
         p.types.push({...p.types.find(row=>row.id==='array<i32>'),id:type,elementType:valueType});
         p.types.sort((a,b)=>byteOrder(a.id,b.id));
       }
-      fn.bindings.push({...fn.bindings[0],id,name,nameRange,writable:order,annotationRange,elementAnnotationRange:span(annotationRange.start,annotationRange.end-2),
+      if(external){
+        fn.returnAnnotationRange=span(fn.returnAnnotationRange.start+extra,fn.returnAnnotationRange.end+extra);
+        const nameRange=locate('incoming',paramEnd),annotationRange=locate('bool[]',nameRange.end);
+        const incoming=originId(root,nameRange),declarationRange=span(nameRange.start,annotationRange.end);
+        fn.parameters.push({...fn.parameters[0],id:incoming,name:'incoming',nameRange,annotationRange,declaredType:type,
+          elementAnnotationRange:span(annotationRange.start,annotationRange.end-2),declarationRange});
+        p.entryCompatibilityRoots.push({functionId:fn.id,parameterBinding:incoming,viewType:type,origin:{source:root,...declarationRange},roots:[]});
+      }
+      fn.bindings.push({...fn.bindings[0],id,name,nameRange,writable:order||external,annotationRange,elementAnnotationRange:span(annotationRange.start,annotationRange.end-2),
         declarationRange:range,declaredType:type});
-      body.push({kind:order?'letDeclaration':'constDeclaration',binding:id,range,initializer:expr('arrayLiteral',type,initial,{
-        allocationSite:allocation(initial),elements:[initialValue(valueType,span(initial.start+1,initial.end-1))]})});
+      body.push({kind:order||external?'letDeclaration':'constDeclaration',binding:id,range,initializer:expr('arrayLiteral',type,initial,{
+        allocationSite:allocation(initial),elements:shape==='empty'?[]:[initialValue(valueType,span(initial.start+1,initial.end-1))]})});
+      if(external){
+        const target=locate(name,range.end),source=locate('incoming',target.end),assignment=span(target.start,source.end);
+        body.push({kind:'expression',range:span(assignment.start,assignment.end+1),value:expr('bindingAssignment',type,assignment,{
+          target:{kind:'bindingTarget',type,binding:id,range:target},operator:'=',operatorRange:locate('=',target.end),
+          value:expr('bindingReference',type,source,{binding:fn.parameters[1].id})})});
+      }
+      if(resize){
+        const alias=locate('alias',range.end),aliasId=originId(root,alias),annotationRange=locate('bool[]',alias.end),read=locate(name,annotationRange.end);
+        const aliasRange=span(alias.start,read.end);
+        fn.bindings.push({...fn.bindings.at(-1),id:aliasId,name:'alias',nameRange:alias,annotationRange,
+          elementAnnotationRange:span(annotationRange.start,annotationRange.end-2),declarationRange:aliasRange});
+        body.push({kind:'constDeclaration',binding:aliasId,range:aliasRange,initializer:expr('bindingReference',type,read,{binding:id})});
+        const receiver=locate('alias',read.end),length=locate('length',receiver.end),zero=locate('0',length.end),assignment=span(receiver.start,zero.end);
+        body.push({kind:'expression',range:span(assignment.start,assignment.end+1),value:expr('lengthAssignment','u32',assignment,{
+          target:{kind:'lengthTarget',type:'u32',range:span(receiver.start,length.end),property:p.arrayLength.id,nameRange:length,
+            receiver:expr('bindingReference',type,receiver,{binding:aliasId})},
+          operator:'=',operatorRange:locate('=',length.end),value:initialValue('u32',zero)})});
+      }
       const nameUse=locate(name,location.start),index=initialValue('u32',span(location.end-2,location.end-1));
       let receiver=expr('bindingReference',type,nameUse,{binding:id});
       if(order){
@@ -155,13 +188,13 @@ function reassignmentProgram(mode,family='local'){
   return {hir:coldReframedHir(packet,fn,previousId,file),site,inner:called.range,rhs:outerRhs?.range};
 }
 
-function checkReassignment(mode,family,checkCore=true){
+function checkReassignment(mode,family){
   const {hir,site,inner,rhs}=reassignmentProgram(mode,family),fn=hir.functions.find(row=>row.name==='captureSpanOrdinary');
   const reader=name=>hir.functions.find(row=>row.name===name).id;
   const targets=commonTargets(hir,commonMeter());
   assert.deepEqual(targets.site(fn.id,inner),{top:false,functions:[reader('readSecond')]});
   const expected=mode==='unconditional'||mode==='='||rhs?[reader('readSecond')]:[reader('readFirst'),reader('readSecond')].sort();
-  if(checkCore)assert.doesNotThrow(()=>emitCommonProgramCore(hir,createCommonProgramPublication(hir),{
+  assert.doesNotThrow(()=>emitCommonProgramCore(hir,createCommonProgramPublication(hir),{
     targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()}));
   assert.deepEqual(targets.site(fn.id,site),{top:false,functions:expected});
   if(rhs)assert.deepEqual(targets.site(fn.id,rhs),{top:false,functions:expected});
@@ -170,7 +203,14 @@ for(const mode of ['unconditional','if','&&','||','&&=','||=','=','??='])test('r
 for(const family of ['global','field','element','element receiver'])for(const mode of ['=','??='])
   test('retained-derived '+family+' numeric target through '+mode,()=>checkReassignment(mode,family));
 for(const family of ['element','element receiver'])for(const mode of ['&&=','||='])
-  test('retained-derived '+family+' Boolean target analysis through '+mode,()=>checkReassignment(mode,family,false));
+  test('retained-derived '+family+' Boolean target through '+mode,()=>checkReassignment(mode,family));
+for(const [shape,family] of [['empty','element'],['empty','element receiver'],['resized','element'],['external','element']])
+  test('retained-derived Boolean '+family+' requires an initialized slot after '+shape+' setup',()=>{
+    const {hir}=reassignmentProgram('&&=',family,shape);
+    assert.throws(()=>emitCommonProgramCore(hir,createCommonProgramPublication(hir),{
+      targets:hir.closure.requiredRoots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()}),
+    e=>e instanceof Error&&'code'in e&&e.code==='r03-common-program-capability'&&e.message.includes('condition has no proved boolean actual value'));
+  });
 
 function coldReframedHir(packet,fn,previousId,file){
   const p=packet.payload,root=p.rootFile;

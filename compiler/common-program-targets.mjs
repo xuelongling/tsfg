@@ -272,7 +272,10 @@ export function commonTargets(hir,spend,records=null) {
       if(verifiedView(value.expression.type,value.type,value.compatibilityRoots??[]))linkArrays(value.expression.type,value.type);
       else {expose(value.expression.type);expose(value.type);}erase(value.type,value.expression.type);
     }else if(value.kind==='call'&&value.callee==='intrinsic:readSpan')linkArrays(value.arguments[0].type,value.type);
-    else if(type&&['array','readSpan'].includes(type.kind)&&!['bindingReference','parentheses','nonNull','bindingAssignment','fieldAssignment','elementAssignment'].includes(value.kind))expose(value.type);
+    // A Bool Array binding target names storage. The assignment's RHS still
+    // participates in the birth scan and the usual alias and escape checks.
+    else if(type&&['array','readSpan'].includes(type.kind)&&!['bindingReference','parentheses','nonNull','bindingAssignment','fieldAssignment','elementAssignment'].includes(value.kind)&&
+      !(value.kind==='bindingTarget'&&type.kind==='array'&&type.elementType===boolTypeId))expose(value.type);
     if(value.kind==='lengthAssignment')cancelArray(value.target.receiver.type);
     for(const key in value){spend();if(Object.hasOwn(value,key)&&!['range','signature','sourceSignature','compatibilityRoots'].includes(key))scan(value[key],defaults);}
   }
