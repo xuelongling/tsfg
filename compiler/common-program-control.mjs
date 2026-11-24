@@ -126,7 +126,7 @@ export function planCommonFunction(model,owner) {
     const condition=values.expression(statement.condition);graph.conditional(state.current,condition,body,after,statement.condition.range);
     state.current=body;state.cells=collections.map(cells);region(statement.body,active,()=>graph.branch(state.current,header,[],statement.range),[...path,'body']);
     state.current=after;state.cells=cells;
-    if(statement.condition.kind==='booleanLiteral'&&statement.condition.token==='true')terminator('unreachable',[],[],{},statement.range);
+    if(normalBooleanOutcome(statement.condition,model.spend)===true)terminator('unreachable',[],[],{},statement.range);
   }
   function attempt(statement,active,path) {
     const handler=owner.id+'/'+path.join('/'),after=graph.newBlock(),caught=statement.catchClause?graph.newBlock([model.payload]):null,cells=collections.map(state.cells);
