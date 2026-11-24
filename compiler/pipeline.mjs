@@ -14,7 +14,7 @@ import {readSystemQueryFactsAndContext} from './system-query-facts.mjs';
 import {checkQueryBatchSource,checkQueryCoreSource,checkQueryLlvmDialect,emitSystemQueryCore,escapeQueryCompilerBytes,systemQuerySystemIdentity} from './system-query-core.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
 import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
-import {commonProgramCore,requireCommonCoreSelection} from './common-program-core.mjs';
+import {commonProgramCore,requireCommonCoreSelection,requireCoreMarkerStrings} from './common-program-core.mjs';
 import {isCommonProgramContext} from './common-program-hir.mjs';
 import {commonHirFormat} from './common-program-common.mjs';
 import {hirFormat as nullableHirFormat,isSelectedNullableContext} from './nullable-common.mjs';
@@ -431,6 +431,8 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
   if(common||ordinary||generic||exception||nullable||closure||optional||reference){
     const moduleClose=requireCheckedCoreInput(core,coreInput);
     if(common)requireCommonCoreSelection(lowered,core.slice(moduleClose).trimEnd());
+    if(exception)requireCoreMarkerStrings(lowered,core.slice(moduleClose).trimEnd(),
+      'tsfg_core.exception_program',['hir','hir_hash'],'checked exception HIR differs');
     if(generic)requireCheckedGenericFunctions(core,moduleClose,packetDefaultRoot,hir.closure.functions);
   }
   return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot, packetFunctionCount };

@@ -130,56 +130,57 @@ export function commonProgramCore(input,publication,request,options={borrowProof
 }
 export const emitCommonProgramCore=(hir,publication,request)=>commonProgramCore(hir,publication,request).text;
 
-/** @returns {never} */
-function coreSelectionDiffers(){throw new TypeError('r03-core-output: checked Common publication or request differs');}
-
-/** @param {string} dictionary */
-function readCoreSelection(dictionary) {
+/** @param {string} dictionary @param {string} name @param {readonly string[]} fields
+ * @param {()=>never} differs */
+function readCoreMarkerStrings(dictionary,name,fields,differs) {
   const tokens=/(?:^|(?<=\{)|(?<=, ))([A-Za-z_][\w.$-]*|"(?:[^"\\]|\\.)*") = |"(?:[^"\\]|\\.)*"|[{}\[\]]/gu;
   const literal=/"(?:[^"\\]|\\.)*"/y;
   const escapes=new Map([['"','"'],['\\','\\'],['n','\n'],['t','\t']]);
-  let depth=0,marker=false,seen=false,publication,request;
+  /** @type {Map<string,string>} */
+  const values=new Map();
+  let depth=0,marker=false,seen=false;
   for(const match of dictionary.matchAll(tokens)){
     const [token,key]=match;
     if(key===undefined){
       if(token==='{'||token==='[')depth++;
       if(token==='}'||token===']'){
         if(depth===1)marker=false;
-        if(--depth<0)coreSelectionDiffers();
+        if(--depth<0)differs();
       }
       continue;
     }
-    if((depth===0||marker&&depth===1)&&key.startsWith('"'))coreSelectionDiffers();
+    if((depth===0||marker&&depth===1)&&key.startsWith('"'))differs();
     const offset=match.index+token.length;
-    if(depth===0&&key===commonCoreFormat.marker){
-      if(seen||dictionary[offset]!=='{')coreSelectionDiffers();
+    if(depth===0&&key===name){
+      if(seen||dictionary[offset]!=='{')differs();
       seen=marker=true;
-    }else if(marker&&depth===1&&(key==='publication'||key==='request')){
+    }else if(marker&&depth===1&&fields.includes(key)){
       literal.lastIndex=offset;
       const quoted=literal.exec(dictionary);
-      if(!quoted||dictionary[literal.lastIndex]!=='}'&&!dictionary.startsWith(', ',literal.lastIndex))coreSelectionDiffers();
+      if(!quoted||values.has(key)||dictionary[literal.lastIndex]!=='}'&&!dictionary.startsWith(', ',literal.lastIndex))differs();
       // Compare bytes after one level of MLIR escaping, including UTF-8 hex bytes.
       const value=Buffer.from(quoted[0].slice(1,-1)).toString('latin1').replace(/\\(?:([a-f0-9]{2})|(.)?)/giu,(_,hex,short)=>
-        hex===undefined?escapes.get(short)??coreSelectionDiffers():String.fromCharCode(Number.parseInt(hex,16)));
-      if(key==='publication'){
-        if(publication!==undefined)coreSelectionDiffers();
-        publication=value;
-      }else{
-        if(request!==undefined)coreSelectionDiffers();
-        request=value;
-      }
+        hex===undefined?escapes.get(short)??differs():String.fromCharCode(Number.parseInt(hex,16)));
+      values.set(key,value);
     }
   }
-  if(depth!==0||!seen||publication===undefined||request===undefined)coreSelectionDiffers();
-  return {publication,request};
+  if(depth!==0||!seen||values.size!==fields.length)differs();
+  return values;
+}
+
+/** @param {string} lowered @param {string} closing @param {string} name
+ * @param {readonly string[]} fields @param {string} diagnostic */
+export function requireCoreMarkerStrings(lowered,closing,name,fields,diagnostic) {
+  const header='module attributes {',close='}) {',suffix='} : () -> ()';
+  const differs=()=>{throw new TypeError('r03-core-output: '+diagnostic);};
+  const end=lowered.indexOf('\n');
+  if(!lowered.startsWith(header)||lowered.slice(end-3,end)!=='} {'||!closing.startsWith(close)||!closing.endsWith(suffix))differs();
+  const expected=readCoreMarkerStrings(lowered.slice(header.length,end-3),name,fields,differs);
+  const actual=readCoreMarkerStrings(closing.slice(close.length,-suffix.length),name,fields,differs);
+  if(fields.some(key=>expected.get(key)!==actual.get(key)))differs();
 }
 
 /** @param {string} lowered @param {string} closing */
 export function requireCommonCoreSelection(lowered,closing) {
-  const header='module attributes {',suffix='} : () -> ()';
-  const end=lowered.indexOf('\n');
-  if(!lowered.startsWith(header)||lowered.slice(end-3,end)!=='} {'||!closing.endsWith(suffix))coreSelectionDiffers();
-  const expected=readCoreSelection(lowered.slice(header.length,end-3));
-  const actual=readCoreSelection(closing.slice(4,-suffix.length));
-  if(actual.publication!==expected.publication||actual.request!==expected.request)coreSelectionDiffers();
+  requireCoreMarkerStrings(lowered,closing,commonCoreFormat.marker,['publication','request'],'checked Common publication or request differs');
 }

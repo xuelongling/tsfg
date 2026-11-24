@@ -705,6 +705,25 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     const accepted=await compileOwnedCore(checked,{core:artifact});
     assert.equal(accepted.status,'ok');
     assert.deepEqual(Buffer.from(accepted.core,'utf8'),matching);
+    const printed=matching.toString('utf8');
+    const altered=[
+      printed.replace('tsfg_core.exception_program = {','tsfg_core.other_program = {'),
+      printed.replace('tsfg.exception-hir-candidate','tsfg.other-hir-candidate'),
+      printed.replace(/(hir_hash = "sha256:)[0-9a-f]{64}"/u,(_,prefix)=>prefix+'0'.repeat(64)+'"'),
+    ];
+    const firstSelection=calls.length;
+    const selection=[];
+    for(const text of altered){
+      assert.notEqual(text,printed);
+      assert.ok(text.includes(`tsfg_core.input_identity = "${checked.inputIdentity}"`));
+      stdout=Buffer.from(text);
+      const result=await compileOwnedCore(checked,{core:artifact});
+      selection.push(result.status==='ok'?{status:result.status}:result);
+    }
+    assert.deepEqual(calls.slice(firstSelection),altered.map(()=>['--canonicalize']));
+    assert.deepEqual(selection,altered.map(()=>({
+      status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: checked exception HIR differs',
+    })));
     stdout=foreign;
     packetStdout=Buffer.alloc(0);
     const first=calls.length;
