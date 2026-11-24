@@ -571,6 +571,25 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
       assert.equal(rejected.status,'tool-error');
       assert.deepEqual(rejected,mismatch);
     });
+    await sub.test('Common Core output retains its checked HIR and kernel proof',async checks=>{
+      const original=matching.toString('utf8');
+      const expected={status:'tool-error',code:'r03-d-consumer',message:'r03-core-output: checked Common HIR or kernel proof differs'};
+      for(const field of ['hir','hir_hash','proof']){
+        const attribute=new RegExp(`, ${field} = "(?:[^"\\\\]|\\\\.)*"`,'gu');
+        assert.equal([...original.matchAll(attribute)].length,1);
+        for(const replacement of ['',`, ${field} = "{}"`]){
+          await checks.test(`${replacement?'changed':'missing'} ${field}`,async()=>{
+            stdout=Buffer.from(original.replace(attribute,replacement));
+            assert.deepEqual(await compileOwnedCore(common,{...options,optimize:Boolean(replacement)}),expected);
+          });
+        }
+      }
+      // Keep the previously diagnosed publication mismatch ahead of a lost proof.
+      await checks.test('publication mismatch retains its diagnostic',async()=>{
+        stdout=Buffer.from(original.replace(', publication = ', ', Xpublication = ').replace(', proof = ', ', Xproof = '));
+        assert.deepEqual(await compileOwnedCore(common,options),{...expected,message:'r03-core-output: checked Common publication or request differs'});
+      });
+    });
     await sub.test('Common bytecode checks the input before emission',async()=>{
       packetStdout=retainedPacket??Buffer.alloc(0);
       stdout=matching;

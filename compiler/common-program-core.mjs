@@ -183,4 +183,5 @@ export function requireCoreMarkerStrings(lowered,closing,name,fields,diagnostic)
 /** @param {string} lowered @param {string} closing */
 export function requireCommonCoreSelection(lowered,closing) {
   requireCoreMarkerStrings(lowered,closing,commonCoreFormat.marker,['publication','request'],'checked Common publication or request differs');
+  requireCoreMarkerStrings(lowered,closing,commonCoreFormat.marker,['hir','hir_hash','proof'],'checked Common HIR or kernel proof differs');
 }
