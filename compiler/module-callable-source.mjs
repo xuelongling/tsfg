@@ -95,7 +95,7 @@ export function verifySource(input,facts,annotations,exports) {
     if (s.signature) signaturePresence(s.signature);
     if(s.kind==='global'){check(s.type!=='function'||aliases.has(s.id),'source');claimed.add(s.id);}
   }
-  function body(fn,items,parent,inherited,initialized,module=false){
+  function body(fn,items,parent,inherited,initialized,module=false,continuedDeclaration=undefined){
     const path=fn.sourcePath,g=gFor(path),visible=new Map(inherited),here=new Set();
     for(const item of items)if(item.kind==='variable'){
       embedded(item.symbol);check(!here.has(item.symbol.name),'source');here.add(item.symbol.name);visible.set(item.symbol.name,item.symbol.id);
@@ -183,8 +183,9 @@ export function verifySource(input,facts,annotations,exports) {
       const gap=g.spelling(previous,item.range.start).filter(x=>x!==';');
       if(item.kind==='variable'||item.kind==='initialize'){
         embedded(item.symbol);const d=item.symbol;
-        check(gap.length===1&&['let','const'].includes(gap[0])||module&&same(gap,['export','let'])||module&&same(gap,['export','const']),'source');
-        check(d.writable===gap.includes('let')&&same(d.range,{start:item.range.start,end:d.range.end}),'source');
+        check(continuedDeclaration&&same(gap,[','])||gap.length===1&&['let','const'].includes(gap[0])
+          ||module&&same(gap,['export','let'])||module&&same(gap,['export','const']),'source');
+        check(d.writable===((continuedDeclaration??gap.at(-1))==='let')&&same(d.range,{start:item.range.start,end:d.range.end}),'source');
         const aliasInitialization = aliasProfile && d.id === alias.id;
         if (aliasInitialization) {
           check(module && item === aliasInitializer && same(gap, ['const']), 'source');
@@ -265,15 +266,22 @@ export function verifySource(input,facts,annotations,exports) {
   // Whole top-level coverage includes imports, reexports and initializer declarations.
   for(const module of facts.modules){
     const g=gFor(module.sourcePath),events=[...facts.functions.filter(f=>f.sourcePath===module.sourcePath).map(f=>({range:f.range,kind:'function'})),...module.imports.map(e=>({range:e.range,kind:'edge'})),...module.initialization.map(s=>({range:s.range,kind:'initialization',statement:s}))].sort((a,b)=>a.range.start-b.range.start);
-    let end=0;
+    let end=0,declarationKind;
     for(const e of events){
-      check(e.range.start>=end,'source');const gap=g.spelling(end,e.range.start).filter(x=>x!==';');
+      check(e.range.start>=end,'source');
+      const tokens=g.spelling(end,e.range.start),gap=tokens.filter(x=>x!==';');
       if(e.kind==='initialization'){
         const item=e.statement,fn={sourcePath:module.sourcePath};const prefix=item.kind==='initialize'?gap:[];
         check(item.kind==='initialize'||gap.length===0,'source');
         const start=prefix.length?g.between(end,e.range.start)[0].start:e.range.start;
-        body(fn,[item],{start,end:e.range.end},new Map(),new Set(),true);
-      }else check(gap.length===0,'source');end=e.range.end;
+        const continuation=same(tokens,[','])?declarationKind:undefined;
+        body(fn,[item],{start,end:e.range.end},new Map(),new Set(),true,continuation);
+        // The callable alias has its own declaration rather than a declarator list.
+        declarationKind=item.kind==='initialize'&&item!==aliasInitializer?continuation??gap.at(-1):undefined;
+      }else{
+        check(gap.length===0,'source');declarationKind=undefined;
+      }
+      end=e.range.end;
     }
     check(g.spelling(end,sources.get(module.sourcePath).content.length).every(x=>x===';'),'source');
   }
