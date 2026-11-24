@@ -23,10 +23,7 @@ pub fn undefinedValue(allocator: std.mem.Allocator) Error!Value {
     return .{ .layout = layout, .value = .{ .tag = 0, .bytes = bytes, .references = try allocator.alloc(?managed.Handle, 0) } };
 }
 pub fn present(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Handle, target: views.Id, member: views.Id) Error!bool {
-    const actual = try heap.copyTypedCellLayout(receiver); defer actual.deinit(heap.allocator);
-    return switch (try module.resolveField(actual, target, member)) {
-        .missing => false, .actual => |id| try heap.hasTypedField(receiver, actual, id),
-    };
+    return heap.hasViewedField(module, receiver, target, member);
 }
 pub fn read(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Handle,
     target: views.Id, member: views.Id, lifetime: managed.Lifetime) Error!Value {

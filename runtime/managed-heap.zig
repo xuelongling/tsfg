@@ -414,16 +414,28 @@ pub const ManagedHeap = struct {
         return value.initialized[try value.layout.fieldIndex(id)];
     }
 
-    fn typedCellLayout(self: *ManagedHeap, handle: Handle) Error!CellLayout {
+    fn resolveTypedCell(self: *ManagedHeap, handle: Handle) Error!*const @import("managed-cell.zig").Cell {
         const object = try self.resolve(handle);
         if (object.payload != .cell) return error.TypeMismatch;
-        return object.payload.cell.layout;
+        return &object.payload.cell;
     }
     pub fn copyTypedCellLayout(self: *ManagedHeap, handle: Handle) Error!CellLayout {
-        return (try self.typedCellLayout(handle)).clone(self.allocator);
+        return (try self.resolveTypedCell(handle)).layout.clone(self.allocator);
     }
     pub fn typedCellIdentity(self: *ManagedHeap, handle: Handle) Error![32]u8 {
-        return (try self.typedCellLayout(handle)).type_id;
+        return (try self.resolveTypedCell(handle)).layout.type_id;
+    }
+    pub fn hasViewedField(self: *ManagedHeap, module: anytype, receiver: Handle,
+        target: [32]u8, member: [32]u8) Error!bool {
+        comptime {
+            if (@TypeOf(module) != @import("typed-reference-views.zig").Module and
+                @TypeOf(module) != @import("typed-field-backing.zig").Module) @compileError("verified member module required");
+        }
+        const actual = try self.resolveTypedCell(receiver);
+        return switch (try module.resolveField(actual.layout, target, member)) {
+            .missing => false,
+            .actual => |id| actual.initialized[try actual.layout.fieldIndex(id)],
+        };
     }
     pub fn resolveTypedMethod(self: *ManagedHeap, module: anytype, receiver: Handle,
         target: [32]u8, member: [32]u8) Error!struct {
@@ -433,7 +445,7 @@ pub const ManagedHeap = struct {
             if (@TypeOf(module) != @import("typed-reference-views.zig").Module and
                 @TypeOf(module) != @import("typed-field-backing.zig").Module) @compileError("verified member module required");
         }
-        const actual = try self.typedCellLayout(receiver);
+        const actual = (try self.resolveTypedCell(receiver)).layout;
         return .{ .method = try module.method(actual, target, member), .actual_type = actual.type_id, .runtime_key = actual.runtime_key };
     }
 

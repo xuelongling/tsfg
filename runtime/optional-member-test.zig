@@ -120,6 +120,41 @@ test "actual Missing read is native undefined and Present(undefined) remains pre
     try std.testing.expectError(error.InvalidViewMember, module.read(&heap, absent, s.target, unknown, .persistent));
     try std.testing.expectError(error.InvalidViewMember, module.read(&heap, absent, s.target, unknown, .temporary));
 }
+test "viewed field presence uses the live layout without allocating" {
+    const raw = try bytes("fields");
+    defer allocator.free(raw);
+    var module = try backing.load(allocator, raw);
+    defer module.deinit();
+    const s = try selected(module);
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    var heap = managed.ManagedHeap.init(failing.allocator());
+    defer heap.deinit() catch unreachable;
+    try heap.installTypedLayouts(module.authority.layouts);
+    const present = try module.create(&heap, s.present, .persistent);
+    const absent = try module.create(&heap, s.missing, .persistent);
+    const uninitialized = try module.create(&heap, s.target, .persistent);
+    const scalar_object = try heap.create(1, 0, 0, .persistent);
+    try module.write(&heap, present, s.present, s.present_field, undefinedId(), .{ .bytes = &.{}, .references = &.{} });
+
+    var other_heap = managed.ManagedHeap.init(allocator);
+    defer other_heap.deinit() catch unreachable;
+    try other_heap.installTypedLayouts(module.authority.layouts);
+    const foreign = try module.create(&other_heap, s.present, .persistent);
+    var copied_heap = heap;
+    const unknown = [_]u8{99} ** 32;
+    failing.fail_index = failing.alloc_index;
+    failing.resize_fail_index = failing.resize_index;
+    try std.testing.expect(try module.present(&heap, present, s.target, s.member));
+    try std.testing.expect(!try module.present(&heap, absent, s.target, s.member));
+    try std.testing.expect(!try module.present(&heap, uninitialized, s.target, s.member));
+    try std.testing.expectError(error.InvalidViewMember, module.present(&heap, present, s.target, unknown));
+    try std.testing.expectError(error.MissingView, module.present(&heap, present, unknown, s.member));
+    try std.testing.expectError(error.TypeMismatch, module.present(&heap, scalar_object, s.target, s.member));
+    try std.testing.expectError(error.InvalidOwner, module.present(&copied_heap, present, s.target, s.member));
+    try std.testing.expectError(error.InvalidHandle, module.present(&heap, foreign, s.target, s.member));
+    try heap.release(present);
+    try std.testing.expectError(error.InvalidHandle, module.present(&heap, present, s.target, s.member));
+}
 test "TSGVIEW2 rejects old-magic relabels truncation and malformed discriminants transactionally" {
     const raw = try bytes("views"); defer allocator.free(raw);
     var module = try views.load(allocator, raw); module.deinit();
