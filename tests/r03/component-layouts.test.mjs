@@ -19,7 +19,7 @@ for(const [name,layoutFile]of [['positive','component-layout.json'],['scalar-edg
 test('GC component content is a storage capability boundary on original complete Source',()=>{
   assert.throws(()=>readComponentLayouts(actual,hir('reference-negative')),{code:'r10-component-capability'});
 });
-const edit=mutate=>{const envelope=JSON.parse(actual.toString()),payload=JSON.parse(envelope.payload);mutate(envelope,payload);
+const edit=(mutate,bytes=actual)=>{const envelope=JSON.parse(bytes.toString()),payload=JSON.parse(envelope.payload);mutate(envelope,payload);
   envelope.payload=canonical(payload);envelope.payloadHash=sha256('tsfg.component-layout.v1\0'+envelope.payload);return Buffer.from(canonical(envelope)+'\n');};
 const component=p=>p.types.find(t=>t.kind==='component'&&t.fields.length>1);
 const cases=[
@@ -37,6 +37,15 @@ const cases=[
  ['unaligned-member',(e,p)=>{component(p).fields[1].offset++;}],['outside-member',(e,p)=>{component(p).fields[0].offset=65536;}],
 ];
 for(const[name,mutate]of cases)test('cold component boundary rejects '+name,()=>assert.throws(()=>readComponentLayouts(edit(mutate),positive)));
+const scalarEdges=readFileSync(new URL('../../runtime/jobs/testdata/component-layout-scalars.json',import.meta.url));
+const scalarInput=hir('scalar-edges');
+for(const [scalar,layout] of [
+  ['i32',{byteSize:2,alignment:2,stride:2}],['i64',{alignment:4}],['f64',{alignment:4}],
+  ['isize',{byteSize:4,alignment:4,stride:4}],['usize',{byteSize:4,alignment:4,stride:4}],
+])test('cold component boundary rejects wrong scalar ABI for '+scalar,()=>{
+  const bytes=edit((_,payload)=>Object.assign(payload.types.find(row=>row.scalar===scalar),layout),scalarEdges);
+  assert.throws(()=>readComponentLayouts(bytes,scalarInput),{code:'r10-component-layout',message:/scalar component layout ABI differs/});
+});
 test('component bytes and owned roundtrip never replace the bound semantic inputs',()=>{
   const bad=JSON.parse(actual.toString());bad.payloadHash='sha256:'+'0'.repeat(64);assert.throws(()=>readComponentLayouts(Buffer.from(canonical(bad)+'\n'),positive));
   assert.throws(()=>readComponentLayouts(Buffer.concat([actual,Buffer.from('\n')]),positive));
