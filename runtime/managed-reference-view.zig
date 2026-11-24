@@ -31,13 +31,6 @@ pub fn read(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Handl
     return .{ .layout = field.layout, .value = field.value };
 }
 
-// The view lookup selects the actual field. The heap rechecks its layout and initialization.
-pub fn readActualField(heap: *managed.ManagedHeap, receiver: managed.Handle, actual: managed.CellLayout,
-    id: views.Id, lifetime: managed.Lifetime) Error!Value {
-    const field = actual.fields[try actual.fieldIndex(id)];
-    const layout = try field.layout.clone(heap.allocator); errdefer layout.deinit(heap.allocator);
-    return .{ .layout = layout, .value = try heap.readTypedField(receiver, actual, id, lifetime) };
-}
 // Input uses the actual representation returned by read, not a target field's
 // physical layout. Source assignment adaptation belongs to formal lowering.
 pub fn write(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Handle,

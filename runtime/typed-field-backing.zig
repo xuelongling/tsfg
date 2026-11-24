@@ -80,15 +80,16 @@ pub const Module = struct {
     // object's later mutation or scope. All fallible provenance/allocation work
     // precedes read's transactional root publication.
     pub fn capture(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, member: Id) managed.Error!*Value {
-        const actual_layout = try heap.copyTypedCellLayout(receiver); defer actual_layout.deinit(heap.allocator);
-        const actual_field: ?Id = switch (try self.resolveField(actual_layout, target, member)) { .actual => |id| id, .missing => null };
+        const actual_type = try heap.typedCellIdentity(receiver);
         const allocator = heap.allocator;
         const result = try allocator.create(Captured); errdefer allocator.destroy(result);
+        const selected = try heap.readViewedField(self, receiver, target, member, .persistent);
+        const payload: access.Value = if (selected) |selected_field| .{ .layout = selected_field.layout, .value = selected_field.value }
+            else try access.undefinedValue(allocator);
         result.* = .{ .heap = heap, .heap_owner = receiver.owner, .allocator = allocator,
-            .input_identity = self.authority.input_identity, .actual_type = actual_layout.type_id,
-            .actual_field = actual_field, .source_view = target, .source_member = member,
-            .payload = if (actual_field) |id| try access.readActualField(heap, receiver, actual_layout, id, .persistent)
-                else try access.undefinedValue(allocator) };
+            .input_identity = self.authority.input_identity, .actual_type = actual_type,
+            .actual_field = if (selected) |selected_field| selected_field.id else null, .source_view = target, .source_member = member,
+            .payload = payload };
         return @ptrCast(result);
     }
     pub fn release(self: Module, value: *Value) managed.Error!void {
