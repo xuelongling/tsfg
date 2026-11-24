@@ -326,7 +326,11 @@ bool BorrowTrace::Impl::orderCalls(){
       // fixed table. Unknown/incomplete calls retain entry use/effect/escape.
       effect(at,bound.owner);if(!step(bound.arguments.size()))return false;
       if(!bound.arguments.empty())uses[at].insert(bound.arguments.begin(),bound.arguments.end());
-      if(bound.escaping&&hard)lifetime=locations.at(at);
+      // A finite actual subset of a known, borrow-safe upper still keeps the
+      // fixed effects at entry. Unreached arms alone do not export an operand.
+      const bool actualSubset=!bound.hard&&!bound.conservative&&actual!=connectedTargets.end()&&
+        !actual->second.empty()&&actual->second.size()<bound.targets.size();
+      if(bound.escaping&&hard&&!actualSubset)lifetime=locations.at(at);
     }return c.e.message.empty();
   }
 bool ActualCheck::preparePublicBorrowContexts(){
