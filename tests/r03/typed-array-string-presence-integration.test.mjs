@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {buildHir,lowerFormalHir,printHir,readHir} from '../../compiler/hir.mjs';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
+import {accepted,invokeCore} from './generic-core-package-capture.mjs';
 
 const bytes=await readFile(new URL('./testdata/typed-array-string-presence-v11/package.json',import.meta.url));
 const facts=readTypedArrayFacts(bytes,11);
@@ -70,3 +71,13 @@ for(const [name,kind] of /** @type {const} */ ([
     }
   });
 }
+
+test('complete Core admits String length intermediates without Source usize declarations',
+  {skip:!process.env.TSFG_CORE_IR_EXE},async()=>{
+    assert.ok(!facts.payload.types.some(type=>type.kind==='scalar'&&type.name==='usize'));
+    const result=await invokeCore(core,'--canonicalize',AbortSignal.timeout(15_000));
+    accepted(result);
+    const canonical=result.stdout.toString('utf8');
+    assert.match(canonical,/"tsfg_string\.length".*!tsfg_core\.integer<"usize">/u);
+    assert.match(canonical,/"tsfg_string\.slice"/u);
+  });

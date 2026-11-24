@@ -17,7 +17,8 @@ export function expectedGenericCore(core, defaultId) {
 
 // Real CLI only. Root supplies one qualified executable and owned storage root.
 // Preserve each raw stream and separate exit/close events even when assertions fail.
-export async function invokeCore(input, command = '--canonicalize') {
+/** @param {AbortSignal} [signal] */
+export async function invokeCore(input, command = '--canonicalize', signal) {
   const executable = process.env.TSFG_CORE_IR_EXE;
   const storage = process.env.TSFG_TEST_STORAGE;
   assert.ok(executable, 'TSFG_CORE_IR_EXE must identify the real C++ consumer');
@@ -26,7 +27,7 @@ export async function invokeCore(input, command = '--canonicalize') {
   await mkdir(directory, { recursive: true });
   const stdin = Buffer.from(input);
   await writeFile(path.join(directory, 'stdin.bin'), stdin);
-  const child = spawn(executable, [command], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(executable, [command], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], signal });
   const stdout = [], stderr = [];
   let exit = null, launchError = null, inputError = null;
   child.stdout.on('data', bytes => stdout.push(bytes));
@@ -45,6 +46,7 @@ export async function invokeCore(input, command = '--canonicalize') {
       stdinBytes: stdin.length, stdoutBytes: result.stdout.length, stderrBytes: result.stderr.length,
       exit, close, launchError, inputError }, null, 2) + '\n'),
   ]);
+  assert.ok(!signal?.aborted, 'Core process exceeded its deadline: ' + directory);
   assert.equal(launchError, null, directory);
   assert.deepEqual(exit, close, 'independent natural exit/close must agree: ' + directory);
   assert.equal(close.signal, null, directory);

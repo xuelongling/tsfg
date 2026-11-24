@@ -24,7 +24,9 @@ struct Borrows {
   bool outcome(bool result) {return result||proof.reject(flow.error());}
   bool borrowed(mlir::Value value) {
     if(auto *definition=value.getDefiningOp();definition&&proof.trappingArrayReads.count(definition))return false;
-    const auto *carrier=valueDomain(proof,value.getType());if(!carrier)return false;
+    const auto *carrier=valueDomain(proof,value.getType());
+    // Native scalars can be implementation temporaries without a Source catalogue entry.
+    if(!carrier||!carrier->native.empty())return false;
     const auto found=proof.actualPayloads.find(value);
     if(found!=proof.actualPayloads.end()&&!found->second.pending&&!found->second.alternatives.empty()) {
       for(const auto &id:found->second.alternatives) {
