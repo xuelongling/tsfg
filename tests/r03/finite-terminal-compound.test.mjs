@@ -1212,14 +1212,34 @@ test('finite logical Array assignment reads the old slot before branching and wr
   }
 });
 
-test('a mandatory logical assignment RHS failure blocks the later return while a skipped RHS keeps it',async()=>{
-  const cases=[['&&=','true',true],['&&=','false',false],['||=','false',true],['||=','true',false]];
-  for(const [operator,prior,required] of cases)for(const literalTail of [false,true]){
+test('logical assignment retains only the normal paths and writes that reach the later return',async()=>{
+  const literalCases=[{operator:'&&=',prior:'true',required:true},{operator:'&&=',prior:'false',required:false},
+    {operator:'||=',prior:'false',required:true},{operator:'||=',prior:'true',required:false}];
+  const dynamicCases=['&&=','||='].map(operator=>({operator,prior:'b',required:false}));
+  const cases=[{storage:'local',examples:literalCases},{storage:'array',examples:literalCases},
+    {storage:'dynamic',examples:dynamicCases},{storage:'nested-assignment',examples:dynamicCases},
+    {storage:'nested-operator',examples:dynamicCases},{storage:'nested-known',examples:dynamicCases},
+    {storage:'nested-nullish',examples:dynamicCases.slice(0,1)},{storage:'array-rhs-branch',examples:dynamicCases.slice(0,1)}];
+  for(const {storage,examples} of cases)for(const {operator,prior,required} of examples)for(const alternate of [false,true]){
     const packet=await retainedPacket('typed-array-actual-v8/aa472de340f45c64b9b63c95cd7765ab411f657f86b86e553d7cb0c2b7d2e7fc-package.json',
       'f7d74ee04bb005a4df17a65e49f31b728ce7432961847523e5cdce62464a6fa2');
     const {payload}=packet,fn=payload.functions[0],file=payload.files.find(row=>row.path===payload.rootFile);
-    const returned=literalTail?'true':'a[0]',source=file.content=
-      'export function read():bool{const a:bool[]=[true];let x:bool='+prior+';x'+operator+'a[1];return '+returned+';}\n';
+    const local=storage==='local',nestedAssignment=storage==='nested-assignment',nestedNullish=storage==='nested-nullish',
+      nestedKnown=storage==='nested-known',nestedOperator=storage==='nested-operator'||nestedNullish||nestedKnown,
+      nested=nestedAssignment||nestedOperator,hasLocal=local||nestedAssignment||nestedKnown,
+      deep=storage==='array-rhs-branch',hasGate=nested&&!nestedKnown||deep,dynamic=storage==='dynamic'||nested||deep,
+      literalTail=!dynamic&&alternate,successfulRhs=dynamic&&alternate,
+      rightIndex=deep?(successfulRhs?'1':'2'):successfulRhs?'0':'1',rightRead='a['+rightIndex+']',
+      right=deep?'(c&&((a[1]=b)==='+rightRead+'))':rightRead,tailIndex=deep?'1':'0',
+      returned=literalTail?'true':'a['+tailIndex+']',target=local?'x':'a[0]',array=deep?'b,b':local?'true':prior,
+      gateAnnotation=nestedNullish?'bool|undefined':'bool',gateDeclaration='c:'+gateAnnotation,
+      parameters=dynamic?'b:bool'+(hasGate?','+gateDeclaration:''):'',
+      xValue=nestedAssignment?'c':nestedKnown?(operator==='&&='?'true':'false'):prior,
+      localDecl=hasLocal?'let x:bool='+xValue+';':'',inner=target+operator+right,
+      outerOperator=nestedNullish?'??':nestedAssignment?operator:operator.slice(0,-1),
+      outerTarget=nestedAssignment||nestedKnown?'x':'c',
+      expression=nested?outerTarget+outerOperator+'('+inner+')':inner,source=file.content=
+        'export function read('+parameters+'):bool{const a:bool[]=['+array+'];'+localDecl+expression+';return '+returned+';}\n';
     const span=(text,from=0)=>{
       const start=source.indexOf(text,from);
       assert.ok(start>=0,text);
@@ -1227,8 +1247,7 @@ test('a mandatory logical assignment RHS failure blocks the later return while a
     };
     fn.declarationRange={start:0,end:source.length-1};
     fn.id=sha256('tsfg.array-facts.function.v8\0'+canonical({sourcePath:file.path,declarationRange:fn.declarationRange}));
-    fn.returnAnnotationRange=span('bool');
-    fn.parameters=[];
+    fn.returnAnnotationRange=span('bool',source.indexOf('):')+2);
     const boolean=(token,range)=>({kind:'booleanLiteral',type:'bool',flowType:'bool',token,range});
     const bind=(name,text,annotation,writable)=>{
       const declarationRange=span(text),nameRange={start:declarationRange.start,end:declarationRange.start+1},
@@ -1236,31 +1255,86 @@ test('a mandatory logical assignment RHS failure blocks the later return while a
       return {id:originId(file.path,nameRange),name,kind:'local',nameRange,declarationRange,annotationRange,
         elementAnnotationRange:name==='a'?span('bool',annotationRange.start):null,declaredType,writable};
     };
-    const a=bind('a','a:bool[]=[true]','bool[]',false),x=bind('x','x:bool='+prior,'bool',true);
-    fn.bindings=[a,x];
+    const gateType=nestedNullish?'union<bool,undefined>':'bool';
+    if(nestedNullish){
+      payload.types.push({id:'undefined',kind:'undefined',constructor:null},
+        {id:gateType,kind:'union',members:['bool','undefined'],constructor:null});
+      payload.types.sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+    }
+    const a=bind('a','a:bool[]=['+array+']','bool[]',false),x=hasLocal?bind('x','x:bool='+xValue,'bool',true):null,
+      b=dynamic?{...bind('b','b:bool','bool',true),kind:'parameter'}:null,
+      c=hasGate?{...bind('c',gateDeclaration,gateAnnotation,true),kind:'parameter',declaredType:gateType}:null;
+    fn.parameters=[b,c].filter(Boolean);
+    fn.bindings=x?[a,x]:[a];
     const read=(token,range)=>({kind:'checkedElementAccess',type:'bool',flowType:'bool',range,
       receiver:{kind:'bindingReference',type:a.declaredType,flowType:a.declaredType,binding:a.id,range:{start:range.start,end:range.start+1}},
       index:{kind:'numericLiteral',type:'u32',flowType:'u32',token,decimal:token,range:{start:range.start+2,end:range.start+3}}});
-    const allocation=span('[true]'),assignment=span('x'+operator+'a[1]'),rhs=read('1',span('a[1]')),
-      tail=span('return '+returned+';');
+    const allocation=span('['+array+']'),assignment=span(inner),whole=span(expression,allocation.end),
+      rhsRange=span(right,assignment.start+target.length+operator.length),
+      tail=span('return '+returned+';'),targetRange=span(target,assignment.start),
+      {receiver,index}=local?{}:read('0',targetRange),assignmentTarget=local?
+        {kind:'bindingTarget',type:'bool',binding:x.id,range:targetRange}:
+        {kind:'elementTarget',type:'bool',range:targetRange,receiver,index};
+    const reference=(binding,range)=>({kind:'bindingReference',type:binding.declaredType,flowType:binding.declaredType,binding:binding.id,range});
+    const parenthesize=expression=>({kind:'parentheses',type:'bool',flowType:'bool',
+      range:{start:expression.range.start-1,end:expression.range.end+1},expression});
+    const binary=(operator,left,right)=>({kind:'binary',type:'bool',flowType:'bool',operator,
+      operatorRange:span(operator,left.range.end),range:{start:left.range.start,end:right.range.end},left,right});
+    /** @type {ReturnType<typeof read>|ReturnType<typeof parenthesize>} */
+    let rhs=read(rightIndex,span(rightRead,rhsRange.start));
+    if(deep){
+      const storeRange=span('a[1]=b',rhsRange.start),old=span('a[1]',storeRange.start),{receiver,index}=read('1',old);
+      const store={kind:'elementAssignment',type:'bool',flowType:'bool',operator:'=',operatorRange:span('=',old.end),
+        range:storeRange,target:{kind:'elementTarget',type:'bool',range:old,receiver,index},value:reference(b,span('b',old.end))};
+      const comparison=binary('===',parenthesize(store),read(rightIndex,span(rightRead,storeRange.end)));
+      rhs=parenthesize(binary('&&',reference(c,span('c',rhsRange.start)),parenthesize(comparison)));
+    }
+    const compound={kind:local?'bindingAssignment':'elementCompoundAssignment',type:'bool',flowType:'bool',
+      range:assignment,operator,operatorRange:span(operator,assignment.start),target:assignmentTarget,value:rhs};
+    const group=parenthesize(compound),firstElement=span(deep?'b':array,allocation.start),
+      elements=[b?reference(b,firstElement):boolean(array,firstElement)];
+    if(deep)elements.push(reference(b,span('b',firstElement.end)));
+    const outerRange=nested?span(outerTarget,whole.start):null,
+      outerOperatorRange=outerRange?span(outerOperator,outerRange.end):null;
+    const statementValue=nestedAssignment?{kind:'bindingAssignment',type:'bool',flowType:'bool',range:whole,
+      operator:outerOperator,operatorRange:outerOperatorRange,
+      target:{kind:'bindingTarget',type:'bool',binding:x.id,range:outerRange},value:group}:
+      nestedOperator?{kind:'binary',type:'bool',flowType:'bool',range:whole,operator:outerOperator,
+        operatorRange:outerOperatorRange,left:reference(nestedKnown?x:c,outerRange),right:group}:compound;
     fn.body=[
       {kind:'constDeclaration',binding:a.id,range:a.declarationRange,initializer:{kind:'arrayLiteral',type:a.declaredType,
         flowType:a.declaredType,range:allocation,allocationSite:sha256('tsfg.array-facts.allocation.v8\0'+canonical({
-          sourcePath:file.path,declarationRange:allocation})),elements:[boolean('true',span('true',allocation.start))]}},
-      {kind:'letDeclaration',binding:x.id,range:x.declarationRange,initializer:boolean(prior,span(prior,x.annotationRange.end))},
-      {kind:'expression',range:{...assignment,end:assignment.end+1},value:{kind:'bindingAssignment',type:'bool',flowType:'bool',
-        range:assignment,operator,operatorRange:span(operator,assignment.start),
-        target:{kind:'bindingTarget',type:'bool',binding:x.id,range:{start:assignment.start,end:assignment.start+1}},value:rhs}},
-      {kind:'return',range:tail,value:literalTail?boolean('true',span(returned,tail.start)):read('0',span(returned,tail.start))}
+          sourcePath:file.path,declarationRange:allocation})),elements}},
+      ...(x?[{kind:'letDeclaration',binding:x.id,range:x.declarationRange,initializer:nestedAssignment?
+        reference(c,span(xValue,x.annotationRange.end)):boolean(xValue,span(xValue,x.annotationRange.end))}]:[]),
+      {kind:'expression',range:{...whole,end:whole.end+1},value:statementValue},
+      {kind:'return',range:tail,value:literalTail?boolean('true',span(returned,tail.start)):read(tailIndex,span(returned,tail.start))}
     ];
     payload.exports[0].functionId=fn.id;
-    payload.entryCompatibilityRoots=[];
+    payload.entryCompatibilityRoots=fn.parameters.map(binding=>({functionId:fn.id,parameterBinding:binding.id,viewType:binding.declaredType,
+      origin:{source:file.path,...binding.declarationRange},roots:[]})).sort((a,b)=>a.parameterBinding.localeCompare(b.parameterBinding));
     const {hir,context,publication}=buildDerivedPacket(packet,file);
     const plan=buildFiniteCoreDomains(hir,context,{publicationContext:publication}).reached,root=hir.functions[0].id;
     const status=suffix=>plan.arrayReaching.reads.find(row=>row.node===root+suffix)?.status;
-    assert.equal(status('/body/2/expression/value'),required?'missing':'pending');
-    if(!literalTail)assert.equal(status('/body/3/value'),required?'pending':'proven');
+    const label=storage+' '+prior+operator+right;
+    if(!local){
+      const statementIndex=hasLocal?2:1,innerSite=root+'/body/'+statementIndex+'/expression'+
+        (nestedAssignment?'/value/operand':nestedOperator?'/right/operand':''),
+        selectedBranch=innerSite+'/value/operand/right/operand',rhsSite=deep?selectedBranch+'/right':innerSite+'/value',
+        tailSite=root+'/body/'+(statementIndex+1)+'/value',
+        rhsRead=plan.arrayReaching.reads.find(row=>row.node===rhsSite),
+        tailRead=plan.arrayReaching.reads.find(row=>row.node===tailSite);
+      assert.equal(rhsRead.status,successfulRhs?'proven':'missing',label);
+      if(!literalTail){
+        const versions=[root+'/body/0/initializer/initial/'+tailIndex+'/array-version'];
+        if(successfulRhs)versions.push((deep?selectedBranch+'/left/operand':innerSite)+'/array-version');
+        assert.deepEqual(tailRead.versions,versions,label);
+      }
+      continue;
+    }
+    assert.equal(status('/body/2/expression/value'),required?'missing':'pending',label);
+    if(!literalTail)assert.equal(status('/body/3/value'),required?'pending':'proven',label);
     const result=plan.nodes.find(row=>row.id===root+'/return'),domain=plan.domains.find(row=>row.id===result?.domainId);
-    assert.deepEqual(domain?.actualTypes??[],required?[]:[scalarTypeIds.bool]);
+    assert.deepEqual(domain?.actualTypes??[],required?[]:[scalarTypeIds.bool],label);
   }
 });

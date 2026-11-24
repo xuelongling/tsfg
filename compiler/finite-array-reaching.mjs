@@ -271,11 +271,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
       numericFailure=true;
       return {terminal:true,trap:path,numeric:true};
     }
-    /** @param {boolean|'initializer'|'superArgument'} [root] */
+    /** @param {boolean|'initializer'|'superArgument'|'conditionalRhs'|'arrayLogicalRhs'} [root] */
     function expression(value,path,state,bindings,root=false,directStatement=false) {
       if(!value)return {};charge();
       const constructionEvaluation=root==='initializer'||root==='superArgument';
-      const terminalRoot=root===true||root==='superArgument';
+      const terminalRoot=root===true||root==='superArgument',arrayLogicalRhs=root==='arrayLogicalRhs';
+      // A conditional RHS can carry proof authority to a nested Array write
+      // without marking ordinary reads in the containing expression terminal.
+      const conditionalRoot=arrayLogicalRhs?root:root===true||root==='conditionalRhs'?'conditionalRhs':false;
       const child=(name,mode=root)=>expression(value[name],path+'/'+name,state,bindings,mode);
       if(value.kind==='reference')return adapt(bindings.get(value.binding)??{symbol:fn.id+'/parameter/'+value.binding},fn.id+'/binding/'+value.binding,path);
       if(['group','nonNull','assertType'].includes(value.kind)) {
@@ -301,7 +304,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         const projectKind=slotValues&&types.get(value.receiver.type)?.kind==='array'?types.get(value.type)?.kind:undefined,
           {status,stored}=load(value,path,state,receiver,index,projectKind);
         if(!collectAll&&status==='missing'&&
-          (constructionEvaluation||terminalRoot&&canTerminateArrayRead(false)))return {terminal:true,trap:path};
+          (constructionEvaluation||arrayLogicalRhs||terminalRoot&&canTerminateArrayRead(false)))return {terminal:true,trap:path};
         return stored?{...stored,symbol:path}:{symbol:path};
       }
       if(['arrayStoreDenseChecked','arrayCompoundAssignment','arrayUpdate','arrayResizeChecked'].includes(value.kind)) {
@@ -323,14 +326,17 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           if(!collectAll&&status==='missing') {
             const terminal=terminalRoot&&canTerminateArrayRead(directStatement&&!fn.ownerType);
             if(terminal&&recordReads){charge();(terminalReads??=new Set()).add(old);}
-            if(constructionEvaluation||terminal)return {terminal:true,trap:old};
+            if(constructionEvaluation||terminal||arrayLogicalRhs)return {terminal:true,trap:old};
           }
-          if(isArrayNullishAssignment(value)||isBooleanAssignment(value)) {
+          const booleanArray=isBooleanAssignment(value);
+          if(isArrayNullishAssignment(value)||booleanArray) {
             if(!collectAll&&status==='missing')return {symbol:path};
-            const {present,absent}=collectAll||isBooleanAssignment(value)?{present:true,absent:true}:presence(old);
+            const {present,absent}=collectAll||booleanArray?{present:true,absent:true}:presence(old);
             if(!absent)return {symbol:path};
             const memory=present?clone(state):state,locals=present?copyBindings(bindings):bindings;
-            const rhs=expression(value.value,path+'/value',memory,locals,present?false:root);
+            // A failed RHS cannot write back, even when the skip edge may continue.
+            const rhsRoot=!present?root:booleanArray&&conditionalRoot?'arrayLogicalRhs':conditionalRoot;
+            const rhs=expression(value.value,path+'/value',memory,locals,rhsRoot);
             if(rhs.terminal)return present?{symbol:path}:rhs;
             writeBack(memory,path+'/value');
             if(!present)return rhs;
@@ -488,14 +494,14 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
         };
         if(!possibilities.absent)return resultValue(left);
         if(!possibilities.present) {
-          const result=evaluateRight(state,bindings,nullish||booleanAssignment||literal!==null?root:false);
+          const result=evaluateRight(state,bindings,nullish||booleanAssignment||literal!==null?root:conditionalRoot);
           if(!result.terminal)return resultValue(result);
           const from=path+'/'+rightKey,trap=result.trap;
           recordLogicalRhs(trap===from||trap?.startsWith(from+'/')?trap:null);
           return result;
         }
         const right=clone(state),branchBindings=copyBindings(bindings),
-          result=evaluateRight(right,branchBindings,false);
+          result=evaluateRight(right,branchBindings,conditionalRoot);
         if(result.terminal)return resultValue(left);
         const merged=join(state,right);state.clear();for(const [id,row] of merged){charge();state.set(id,row);}
         meetBindings(bindings,bindings,branchBindings);
@@ -530,7 +536,7 @@ export function buildFiniteArrayReaching(hir,plan,charge,canTerminateArrayRead) 
           if(!absent)return {symbol:path};
           if(!present)return child('value');
           const memory=clone(state),locals=copyBindings(bindings);
-          const rhs=expression(value.value,path+'/value',memory,locals);
+          const rhs=expression(value.value,path+'/value',memory,locals,conditionalRoot);
           if(rhs.terminal)return {symbol:path};
           const merged=join(state,memory);state.clear();for(const [id,row]of merged){charge();state.set(id,row);}
           meetBindings(bindings,bindings,locals);
