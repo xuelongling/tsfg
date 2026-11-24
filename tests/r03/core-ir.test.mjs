@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { coreTestModule, sourceAttributes } from "./core-fixtures.mjs";
+import { coreTestModule, coreTestVersion, sourceAttributes } from "./core-fixtures.mjs";
 
 const executable = process.env.TSFG_CORE_IR_EXE;
 const input = coreTestModule(`
@@ -46,7 +46,7 @@ function constantReturnOracle(text, expected) {
   const returns = [...body.matchAll(/"func\.return"\((%[\w]+)\)\s*(?:\{[^}]*\})?\s*:\s*\(i32\)\s*->\s*\(\)/g)];
   assert.equal(returns.length, 1, "@sample must return one typed SSA value");
   assert.equal(returns[0][1], constant[1], "@sample must return its expected constant SSA value");
-  assert.match(text, /tsfg_core\.version\s*=\s*"0\.10\.0"/);
+  assert.equal(text.match(/tsfg_core\.version\s*=\s*"([^"]*)"/)?.[1], coreTestVersion);
 }
 
 test("structural oracle rejects a wrong sample result hidden by another function", () => {
@@ -54,7 +54,7 @@ test("structural oracle rejects a wrong sample result hidden by another function
     %0 = "tsfg_core.constant"() {value = ${value} : i32} : () -> i32
     "func.return"(%0) : (i32) -> ()
   }) : () -> ()`;
-  const text = `"builtin.module"() ({${functionText("sample", 0)} ${functionText("other", 42)}}) {tsfg_core.version = "0.10.0"} : () -> ()`;
+  const text = `"builtin.module"() ({${functionText("sample", 0)} ${functionText("other", 42)}}) {tsfg_core.version = "${coreTestVersion}"} : () -> ()`;
   assert.throws(() => constantReturnOracle(text, 42), { code: "ERR_ASSERTION", actual: 0, expected: 42 });
   assert.doesNotThrow(() => constantReturnOracle(text, 0));
   // This only checks the independent oracle; it is not native verifier or
@@ -83,7 +83,11 @@ test("Core IR canonical form preserves boundary constants and ignores source spe
 });
 
 test("Core IR refuses a missing or different exchange identity", () => {
-  for (const fixture of [input.replace("0.10.0", "0.3.0"), input.replace('tsfg_core.version = "0.10.0", ', "")]) {
+  const versionAttribute = `tsfg_core.version = "${coreTestVersion}"`;
+  for (const fixture of [
+    input.replace(versionAttribute, 'tsfg_core.version = "0.10.0"'),
+    input.replace(`${versionAttribute}, `, ""),
+  ]) {
     const child = canonicalize(fixture);
     assert.equal(child.status, 3);
     assert.match(child.stderr, /\[core-ir-identity\]/);
