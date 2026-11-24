@@ -790,9 +790,70 @@ DirectThrowPotential projectConstructorThrowPotential(Program &p,const Function 
     !directLanguageCall(current,selected,meter)||!directLanguageCall(fixed,selected,meter))return pending();
   return Status::Forwarded;
 }
-} // namespace
+bool directNormalSpanCall(const V4::Graph &graph,const std::string &type,V4::Detail::Meter &meter){
+  if(!meter.spend(5)||graph.version!=5||graph.normal.size()!=1||graph.exits.normal.size()!=1)return false;
+  const auto control=graph.exits.normal[0].control;if(control>=graph.controls.size())return false;
+  const auto &completion=graph.controls[control];
+  if(completion.kind!=V4::ControlKind::Call||completion.call!=0||completion.completion!=V4::Completion::Normal)return false;
+  auto ref=graph.normal[0];
+  for(size_t steps=0;steps<graph.nodes.size();++steps){
+    if(!meter.spend(3)||ref>=graph.nodes.size())return false;
+    const auto &node=graph.nodes[ref];if(!node.type||!meter.equal(*node.type,type))return false;
+    if(node.kind==V4::ValueKind::Call)return node.call==0&&node.completion==V4::Completion::Normal;
+    if(node.control!=control)return false;
+    const auto *sources=node.kind==V4::ValueKind::Copy?&node.bases:node.kind==V4::ValueKind::Gate?&node.inputs:nullptr;
+    if(!sources||sources->size()!=1)return false;ref=sources->front();
+  }
+  return false;
+}
 
-DirectThrowPotential projectDirectThrowPotential(Program &p,const Function &cfg,const V4::Graph &current,const V4::Graph &fixed,Error &e){
+bool directSourceSpanTail(const Program &p,const Json &source,const Function &cfg,const Operation &invoke,
+    const std::vector<std::string> &views,const V4::Graph &current,const V4::Graph &fixed,V4::Detail::Meter &meter){
+  const auto &target=current.calls[0].functionId;
+  const auto &directory=p.returnOriginContracts->fixedDirectories.interpretation();
+  if(!meter.lookup(directory.functions.size(),cfg.id.size())||!meter.lookup(directory.functions.size(),target.size()))return false;
+  const auto caller=directory.functions.find(cfg.id),callee=directory.functions.find(target);
+  if(caller==directory.functions.end()||callee==directory.functions.end()||
+    caller->second.kind!=V4::FunctionKind::Source||callee->second.kind!=V4::FunctionKind::Source)return false;
+  const auto &type=caller->second.returnType;
+  if(!meter.equal(type,callee->second.returnType)||!meter.equal(type,cfg.resultCarrier)||
+    !meter.lookup(directory.types.size(),type.size()))return false;
+  const auto shape=directory.types.find(type);if(shape==directory.types.end()||shape->second.kind!=V4::TypeKind::ReadSpan)return false;
+  const auto path=field(source,"sourcePath").getAsString().value_or("");
+  if(!meter.equal(path,cfg.path))return false;
+  bool sameSource=false;for(const auto &fn:p.functions){
+    if(!meter.equal(fn.id,target)){if(!meter.good)return false;continue;}
+    sameSource=meter.equal(fn.path,path);break;
+  }
+  const auto &body=items(field(source,"body"));
+  if(!meter.spend(6)||!sameSource||body.empty()||field(body.back(),"kind").getAsString()!="return")return false;
+  auto *value=&field(body.back(),"value");
+  while(field(*value,"kind").getAsString()=="parentheses"){
+    if(!meter.spend(2))return false;value=&field(*value,"expression");
+  }
+  const auto &range=field(*value,"range");
+  if(!meter.spend(7)||field(*value,"kind").getAsString()!="call"||
+    !meter.equal(field(*value,"callee").getAsString().value_or(""),target)||
+    field(range,"start").getAsInteger()!=invoke.range.start||field(range,"end").getAsInteger()!=invoke.range.end)return false;
+
+  // The only normal block argument is the result of this invoke. Returning
+  // its typed copy keeps the language proof tied to the same tail call.
+  const auto normal=invoke.successors[0];if(!meter.spend(10)||normal>=cfg.blocks.size())return false;
+  const auto &block=cfg.blocks[normal];if(block.parameters.size()!=1||block.operations.size()!=2)return false;
+  for(const auto &candidate:cfg.blocks)for(const auto &op:candidate.operations){
+    if(!meter.spend(op.successors.size()+1))return false;
+    if(&op!=&invoke&&std::find(op.successors.begin(),op.successors.end(),normal)!=op.successors.end())return false;
+  }
+  const auto &copy=block.operations[0],&returned=block.operations[1];const auto parameter=block.parameters[0];
+  return copy.name=="value_copy"&&copy.operands.size()==1&&copy.operands[0]==parameter&&
+    parameter<views.size()&&copy.result<views.size()&&meter.equal(views[parameter],type)&&meter.equal(views[copy.result],type)&&
+    meter.equal(field(copy.properties,"type").getAsString().value_or(""),type)&&
+    returned.name=="func.return"&&returned.operands.size()==1&&returned.operands[0]==copy.result&&
+    directNormalSpanCall(current,type,meter)&&directNormalSpanCall(fixed,type,meter);
+}
+
+DirectThrowPotential projectDirectThrowPotentialImpl(Program &p,const Function &cfg,const V4::Graph &current,
+    const V4::Graph &fixed,const Json *source,bool inheritedEh,Error &e){
   using Status=DirectThrowPotential;const V4::Charge charge=[&](size_t n){return work(p,e,n);};V4::Detail::Meter meter(charge);
   const auto pending=[&]{return meter.good&&e.message.empty()?Status::Pending:Status::Invalid;};
   if(!meter.spend(p.functions.size()+6)||!meter.text(cfg.role.size()))return Status::Invalid;
@@ -800,6 +861,8 @@ DirectThrowPotential projectDirectThrowPotential(Program &p,const Function &cfg,
   if(!owned||cfg.role!="source"||cfg.blocks.empty()||current.calls.size()!=1||fixed.calls.size()!=1)return pending();
   const auto &call=current.calls[0],&bound=fixed.calls[0];
   if(!meter.equal(call.functionId,bound.functionId)||!meter.equal(call.site,bound.site))return pending();
+  const bool isSourceSite=llvm::StringRef(call.site).starts_with("[");
+  if(isSourceSite?source==nullptr||!p.returnOriginContracts:inheritedEh)return pending();
   if(!meter.lookup(p.fixedEffects.size(),call.functionId.size())||!meter.spend(2))return Status::Invalid;const auto permission=p.fixedEffects.find(call.functionId);
   if(permission==p.fixedEffects.end()||!permission->second.mayThrow)return pending();
   if(!meter.lookup(p.sourceBlocks.size(),cfg.id.size())||!meter.lookup(p.sourceRegisters.size(),cfg.id.size())||!meter.lookup(p.registerViews.size(),cfg.id.size()))return Status::Invalid;
@@ -819,7 +882,8 @@ DirectThrowPotential projectDirectThrowPotential(Program &p,const Function &cfg,
   if(!meter.equal(target,call.functionId)||!meter.text(call.site.size()+cfg.id.size()))return pending();
   const auto entryBlock=blocks->second[0];if(entryBlock==noRegister)return pending();
   llvm::StringRef site(call.site);
-  if(site.starts_with("[")){
+  if(isSourceSite){
+    if(!directThrowEdge(cfg,*invocation,meter)||!directSourceSpanTail(p,*source,cfg,*invocation,views->second,current,fixed,meter))return pending();
     // The Source graph names the same checked invocation by target and range.
     if(!meter.text(target.size())||!meter.spend(12))return Status::Invalid;
     const auto sourceSite=canonical(Array{target.str(),int64_t(invocation->range.start),int64_t(invocation->range.end),"call"});
@@ -832,9 +896,14 @@ DirectThrowPotential projectDirectThrowPotential(Program &p,const Function &cfg,
     return meter.spend(5)&&graph.calls[0].control==0&&!graph.controls.empty()&&
       graph.controls[0].kind==V4::ControlKind::Entry&&graph.language.size()==1&&graph.exits.language.size()==1;
   };
-  if(!directThrowEdge(cfg,*invocation,meter)||!entryCall(current)||!entryCall(fixed)||
+  if((!isSourceSite&&!directThrowEdge(cfg,*invocation,meter))||!entryCall(current)||!entryCall(fixed)||
     !directLanguageCall(current,0,meter)||!directLanguageCall(fixed,0,meter))return pending();
   return Status::Forwarded;
+}
+} // namespace
+
+DirectThrowPotential projectDirectThrowPotential(Program &p,const Function &cfg,const V4::Graph &current,const V4::Graph &fixed,Error &e){
+  return projectDirectThrowPotentialImpl(p,cfg,current,fixed,nullptr,false,e);
 }
 
 static ProjectedReturnEffects deriveProjectedEffectsImpl(Program &p,const Json &fn,const Json &raw,Effects &out,Error &e,
@@ -860,11 +929,10 @@ static ProjectedReturnEffects deriveProjectedEffectsImpl(Program &p,const Json &
       const Function *cfg=nullptr;
       for(const auto &candidate:p.functions){if(!work(p,e,(candidate.id.size()+id.size())/8+2))return Status::Invalid;if(candidate.id==id)cfg=&candidate;}
       if(!cfg||bound==state.graphs.end()){p.returnOriginPending.insert(id);return Status::Open;}
-      // The full upper includes inherited EH. The checked CFG establishes
-      // whether this caller intercepts the language completion.
+      // Inherited EH only admits the separate exact Source ReadSpan tail rule.
       const auto forwarded=cfg->role=="construction-body"
         ?projectConstructorThrowPotential(p,*cfg,parsed.graph,bound->second,index,e)
-        :projectDirectThrowPotential(p,*cfg,parsed.graph,bound->second,e);
+        :projectDirectThrowPotentialImpl(p,*cfg,parsed.graph,bound->second,&fn,out.ehControl,e);
       if(forwarded==DirectThrowPotential::Invalid)return Status::Invalid;
       if(forwarded!=DirectThrowPotential::Forwarded){p.returnOriginPending.insert(id);return Status::Open;}
       fullThrowPotential=true;
