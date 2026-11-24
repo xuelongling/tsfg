@@ -100,6 +100,35 @@ for(const family of ['conditional','mapped']) test('cold '+family+' instances re
  assert.throws(()=>readGenericHir(Buffer.from(canonical(changed)+'\n')),{code:'generic-hir-reference'});
 });
 
+test('cold same-definition instances retain original parameters and expression shape',async t=>{
+ const [pkg,recordBytes,core]=await Promise.all([
+  fixture('generic-number-add-package-v7.json'),
+  fixture('generic-number-add-instance-v7.json'),
+  fixture('generic-package7-number-add-core.mlir'),
+ ]);
+ const record=JSON.parse(recordBytes.toString('utf8'));
+ const hir=buildGenericHir(pkg,record.result,record.requests);
+ const text=printGenericHir(hir);
+ const cold=readGenericHir(Buffer.from(text));
+ assert.equal(printGenericHir(cold),text);
+ assert.equal(lowerGenericHir(cold),expectedGenericCore(core.toString('utf8'),cold.closure.roots[0]));
+ assert.equal(cold.functions.length,2);
+ assert.equal(cold.functions[0].definition,cold.functions[1].definition);
+ assert.notEqual(cold.functions[0].instanceKey,cold.functions[1].instanceKey);
+ const changed={
+  'binding position':fn=>{fn.body[0].value.left.binding=fn.parameters[1].id;},
+  'original operand range':fn=>{fn.body[0].value.left.range.start++;},
+  'body expression':fn=>{const value=fn.body[0].value.left; fn.body[0]={kind:'return',range:value.range,value};},
+  'original parameter name':fn=>{fn.parameters[1].name='other';},
+ };
+ for(const [name,update] of Object.entries(changed))await t.test(name,()=>{
+  const altered=structuredClone(cold);
+  update(altered.functions[1]);
+  assert.throws(()=>verifyGenericHir(altered),{code:'generic-hir-reference'});
+  assert.throws(()=>readGenericHir(Buffer.from(canonical(altered)+'\n')),{code:'generic-hir-reference'});
+ });
+});
+
 for(const family of ['conditional','mapped']) test('owned HIR cold entry reads the native byte range for recursive '+family,async t=>{
  const bytes=await fixture(`generic-recursive-${family}-hir-v7.json`);
  const core=await fixture(`generic-recursive-${family}-core-v7.mlir`);

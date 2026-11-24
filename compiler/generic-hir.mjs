@@ -135,7 +135,7 @@ export function verifyGenericHir(hir) {
     functions.set(fn.id, fn);
   }
   let total = 0;
-  const edges = new Map(), definitionTargets = new Map();
+  const edges = new Map(), definitionShapes = new Map();
   for (const fn of hir.functions) {
     let count = 0;
     const targets = [];
@@ -149,41 +149,47 @@ export function verifyGenericHir(hir) {
         record(value, ['kind', 'type', 'binding', 'range']);
         const parameter = fn.parameters.find(item => item.id === value.binding);
         check(parameter && value.type === parameter.type, 'reference');
-      } else if (value.kind === 'binary') {
+        return { kind: 'reference', binding: value.binding, range: value.range };
+      }
+      if (value.kind === 'binary') {
         record(value, ['kind', 'type', 'operator', 'left', 'right', 'range']);
         check(depth === 0 && value.operator === '+' && value.type === scalarTypeIds.f64, 'type');
-        for (const operand of [value.left, value.right]) {
-          check(operand?.kind === 'reference', 'reference'); expression(operand, depth + 1);
+        const [left, right] = [value.left, value.right].map(operand => {
+          check(operand?.kind === 'reference', 'reference');
+          const shape = expression(operand, depth + 1);
           check(operand.type === scalarTypeIds.f64, 'type'); range(operand.range, value.range);
-        }
-        check(value.left.range.end <= value.right.range.start, 'origin');
-      } else {
-        record(value, ['kind', 'type', 'target', 'signatureHash', 'arguments', 'range']);
-        const callee = functions.get(value.target);
-        check(value.kind === 'call' && callee && value.signatureHash === callee.signatureHash
-          && value.type === callee.returnType.id, 'reference');
-        array(value.arguments, genericPackageLimits.parameters);
-        check(value.arguments.length === callee.parameters.length, 'type');
-        targets.push(value.target);
-        value.arguments.forEach((argument, index) => {
-          expression(argument, depth + 1); check(argument.type === callee.parameters[index].type, 'type');
+          return shape;
         });
+        check(value.left.range.end <= value.right.range.start, 'origin');
+        return { kind: 'binary', operator: value.operator, range: value.range, left, right };
       }
+      record(value, ['kind', 'type', 'target', 'signatureHash', 'arguments', 'range']);
+      const callee = functions.get(value.target);
+      check(value.kind === 'call' && callee && value.signatureHash === callee.signatureHash
+        && value.type === callee.returnType.id, 'reference');
+      array(value.arguments, genericPackageLimits.parameters);
+      check(value.arguments.length === callee.parameters.length, 'type');
+      targets.push(value.target);
+      const arguments_ = value.arguments.map((argument, index) => {
+        const shape = expression(argument, depth + 1);
+        check(argument.type === callee.parameters[index].type, 'type');
+        return shape;
+      });
+      return { kind: 'call', definition: callee.definition, range: value.range, arguments: arguments_ };
     };
     array(fn.body, 1, 1);
     const statement = fn.body[0];
     record(statement, ['kind', 'range', 'value']);
     check(statement.kind === 'return' && same(statement.range, statement.value?.range), 'origin');
-    range(statement.range, fn.range); expression(statement.value);
+    range(statement.range, fn.range);
+    const body = expression(statement.value);
     check(statement.value.type === fn.returnType.id, 'type');
-    // Specialization can change the concrete callee ID while preserving the ordered called definitions.
-    const previousTargets = definitionTargets.get(fn.definition);
-    if (previousTargets) {
-      check(targets.length === previousTargets.length && targets.every((target, index) =>
-        functions.get(target).definition === previousTargets[index]), 'reference');
-    } else {
-      definitionTargets.set(fn.definition, targets.map(target => functions.get(target).definition));
-    }
+    // One owned definition keeps its parameter and expression origins when
+    // scalar types and concrete call targets change through specialization.
+    const shape = { parameters: fn.parameters.map(({ name, range }) => ({ name, range })), body };
+    const previousShape = definitionShapes.get(fn.definition);
+    if (previousShape) check(same(previousShape, shape), 'reference');
+    else definitionShapes.set(fn.definition, shape);
     edges.set(fn.id, targets);
   }
   record(hir.closure, ['roots', 'functions']);
