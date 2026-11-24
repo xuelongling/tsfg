@@ -236,6 +236,51 @@ test "view decoding and projected reads release every failed allocation before p
     try std.testing.expect(failures > 0);
     std.debug.print("view decode {d} / read {d} real OOM points then success\n", .{ decode_failures, failures });
 }
+test "viewed field read preserves the first failure with zero allocation budget" {
+    var module = try load("offset");
+    defer module.deinit();
+    const view = module.views[0];
+    const actual = (try module.layouts.find(view.actual)).cell.?;
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    var heap = managed.ManagedHeap.init(failing.allocator());
+    defer heap.deinit() catch unreachable;
+    try heap.installTypedLayouts(module.layouts);
+    const object = try heap.createTypedCell(actual, .persistent);
+
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.UninitializedField, access.read(&heap, module, object, view.target, view.fields[0].target, .temporary));
+    failing.fail_index = std.math.maxInt(usize);
+    try scalar(&heap, object, actual, 1, 42);
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expectError(error.ScopeRequired, access.read(&heap, module, object, view.target, view.fields[0].target, .temporary));
+}
+test "viewed field read needs only the selected owned layout and value" {
+    var module = try load("offset");
+    defer module.deinit();
+    const view = module.views[0];
+    const actual = (try module.layouts.find(view.actual)).cell.?;
+    const field = actual.fields[1];
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    var heap = managed.ManagedHeap.init(failing.allocator());
+    defer heap.deinit() catch unreachable;
+    try heap.installTypedLayouts(module.layouts);
+    const object = try heap.createTypedCell(actual, .persistent);
+    try scalar(&heap, object, actual, 1, 42);
+
+    const before = failing.alloc_index;
+    const layout = try field.layout.clone(failing.allocator());
+    defer layout.deinit(failing.allocator());
+    var direct = try heap.readTypedField(object, actual, field.id, .persistent);
+    defer direct.deinit(failing.allocator());
+    const result_allocations = failing.alloc_index - before;
+    failing.fail_index = failing.alloc_index + result_allocations;
+
+    var projected = try access.read(&heap, module, object, view.target, view.fields[0].target, .persistent);
+    defer projected.deinit(failing.allocator());
+    try std.testing.expect(projected.layout.same(layout));
+    try std.testing.expectEqualSlices(u8, direct.bytes, projected.value.bytes);
+    try std.testing.expectEqualSlices(u8, &.{ 42, 0, 0, 0 }, projected.value.bytes);
+}
 test "view module rejects wrong identities missing mappings and truncation" {
     const raw = try bytes("offset"); defer allocator.free(raw);
     try std.testing.expectError(error.InvalidViewModule, views.load(allocator, raw[0..39]));

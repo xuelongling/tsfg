@@ -36,6 +36,7 @@ pub const ArrayLayout = element.Layout;
 pub const ArrayInput = element.Input;
 pub const ArrayValue = element.Value;
 pub const CellLayout = @import("managed-cell.zig").Layout;
+const Cell = @import("managed-cell.zig").Cell;
 pub const Value = struct { identity: u64, type_id: u64, scalar: u64, edge_count: usize };
 const Payload = payloads.Payload;
 const Object = model.Object;
@@ -116,10 +117,6 @@ pub const ManagedHeap = struct {
         if (lifetime == .persistent) return 0;
         if (self.active_scope == 0) return error.ScopeRequired;
         return self.active_scope;
-    }
-    pub fn validateLifetime(self: *ManagedHeap, lifetime: Lifetime) Error!void {
-        try self.check();
-        _ = try self.scopeFor(lifetime);
     }
     fn owned(self: *ManagedHeap) *State {
         return @ptrCast(@alignCast(self.storage.?));
@@ -356,11 +353,11 @@ pub const ManagedHeap = struct {
         const value = try arrays.array(object, expected);
         const source = try value.readBytes(index);
         const start = @as(usize, index) * value.layout.reference_count;
-        return self.rootedValue(value.layout, value.tags[index], source, object.edges[start..][0..value.layout.reference_count], lifetime);
+        return self.rootedValue(value.layout, value.tags[index], source,
+            object.edges[start..][0..value.layout.reference_count], try self.scopeFor(lifetime));
     }
 
-    fn rootedValue(self: *ManagedHeap, layout: ArrayLayout, tag: u16, source: []const u8, edges: []?*Object, lifetime: Lifetime) Error!ArrayValue {
-        const scope = try self.scopeFor(lifetime);
+    fn rootedValue(self: *ManagedHeap, layout: ArrayLayout, tag: u16, source: []const u8, edges: []?*Object, scope: u64) Error!ArrayValue {
         const bytes = try self.allocator.dupe(u8, source);
         errdefer self.allocator.free(bytes);
         return self.rootedValueWithBytes(layout, tag, bytes, edges, scope);
@@ -414,7 +411,7 @@ pub const ManagedHeap = struct {
         return value.initialized[try value.layout.fieldIndex(id)];
     }
 
-    fn resolveTypedCell(self: *ManagedHeap, handle: Handle) Error!*const @import("managed-cell.zig").Cell {
+    fn resolveTypedCell(self: *ManagedHeap, handle: Handle) Error!*const Cell {
         const object = try self.resolve(handle);
         if (object.payload != .cell) return error.TypeMismatch;
         return &object.payload.cell;
@@ -459,9 +456,37 @@ pub const ManagedHeap = struct {
         const value = try cells.cell(object, expected);
         const index = try value.layout.fieldIndex(id);
         if (!value.initialized[index]) return error.UninitializedField;
+        return self.readFieldValue(object, value, index, try self.scopeFor(lifetime));
+    }
+
+    pub fn readViewedField(self: *ManagedHeap, module: anytype, receiver: Handle,
+        target: [32]u8, member: [32]u8, lifetime: Lifetime) Error!?struct { layout: ArrayLayout, value: ArrayValue } {
+        comptime {
+            if (@TypeOf(module) != @import("typed-reference-views.zig").Module and
+                @TypeOf(module) != @import("typed-field-backing.zig").Module) @compileError("verified member module required");
+        }
+        const object = try self.resolve(receiver);
+        if (object.payload != .cell) return error.TypeMismatch;
+        const value = &object.payload.cell;
+        const id = switch (try module.resolveField(value.layout, target, member)) {
+            .missing => {
+                _ = try self.scopeFor(lifetime);
+                return null;
+            },
+            .actual => |id| id,
+        };
+        const index = try value.layout.fieldIndex(id);
+        if (!value.initialized[index]) return error.UninitializedField;
+        const scope = try self.scopeFor(lifetime);
+        const layout = try value.layout.fields[index].layout.clone(self.allocator);
+        errdefer layout.deinit(self.allocator);
+        return .{ .layout = layout, .value = try self.readFieldValue(object, value, index, scope) };
+    }
+
+    fn readFieldValue(self: *ManagedHeap, object: *Object, value: *const Cell, index: usize, scope: u64) Error!ArrayValue {
         const field = value.layout.fields[index];
         return self.rootedValue(field.layout, value.tags[index], value.fieldBytes(index),
-            object.edges[field.reference_offset..][0..field.layout.reference_count], lifetime);
+            object.edges[field.reference_offset..][0..field.layout.reference_count], scope);
     }
 
     pub fn writeTypedField(self: *ManagedHeap, handle: Handle, expected: CellLayout, id: [32]u8, input: ArrayInput, initialize: bool) Error!void {

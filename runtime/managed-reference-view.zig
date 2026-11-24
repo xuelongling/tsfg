@@ -27,15 +27,8 @@ pub fn present(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Ha
 }
 pub fn read(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Handle,
     target: views.Id, member: views.Id, lifetime: managed.Lifetime) Error!Value {
-    const actual = try heap.copyTypedCellLayout(receiver); defer actual.deinit(heap.allocator);
-    const id = switch (try module.resolveField(actual, target, member)) {
-        .missing => {
-            try heap.validateLifetime(lifetime);
-            return undefinedValue(heap.allocator);
-        },
-        .actual => |id| id,
-    };
-    return readActualField(heap, receiver, actual, id, lifetime);
+    const field = (try heap.readViewedField(module, receiver, target, member, lifetime)) orelse return undefinedValue(heap.allocator);
+    return .{ .layout = field.layout, .value = field.value };
 }
 
 // The view lookup selects the actual field. The heap rechecks its layout and initialization.
