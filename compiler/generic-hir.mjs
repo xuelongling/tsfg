@@ -135,7 +135,7 @@ export function verifyGenericHir(hir) {
     functions.set(fn.id, fn);
   }
   let total = 0;
-  const edges = new Map();
+  const edges = new Map(), definitionTargets = new Map();
   for (const fn of hir.functions) {
     let count = 0;
     const targets = [];
@@ -176,6 +176,14 @@ export function verifyGenericHir(hir) {
     check(statement.kind === 'return' && same(statement.range, statement.value?.range), 'origin');
     range(statement.range, fn.range); expression(statement.value);
     check(statement.value.type === fn.returnType.id, 'type');
+    // Specialization can change the concrete callee ID while preserving the ordered called definitions.
+    const previousTargets = definitionTargets.get(fn.definition);
+    if (previousTargets) {
+      check(targets.length === previousTargets.length && targets.every((target, index) =>
+        functions.get(target).definition === previousTargets[index]), 'reference');
+    } else {
+      definitionTargets.set(fn.definition, targets.map(target => functions.get(target).definition));
+    }
     edges.set(fn.id, targets);
   }
   record(hir.closure, ['roots', 'functions']);

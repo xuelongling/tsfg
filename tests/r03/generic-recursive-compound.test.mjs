@@ -83,6 +83,23 @@ for(const family of ['conditional','mapped']) test('owned HIR cold entry reprodu
  assert.throws(()=>lowerOwnedHir(foreign),/generic-hir-identity/);
 });
 
+for(const family of ['conditional','mapped']) test('cold '+family+' instances retain the same called definition',async()=>{
+ const bytes=await fixture(`generic-recursive-${family}-hir-v7.json`);
+ const hir=readGenericHir(bytes);
+ assert.deepEqual(Buffer.from(printGenericHir(hir)),bytes);
+ const changed=structuredClone(hir);
+ const self=changed.functions.find(fn=>fn.name==='self'&&fn.returnType.name==='f64');
+ const route=changed.functions.find(fn=>fn.name==='route'&&fn.returnType.name==='f64');
+ const call=self.body[0].value;
+ assert.equal(call.target,self.id);
+ assert.equal(call.signatureHash,route.signatureHash);
+ // Replacing a self-edge with an edge to another root preserves the complete reachability set.
+ assert.ok(changed.closure.roots.includes(self.id)&&changed.closure.roots.includes(route.id));
+ call.target=route.id;
+ assert.throws(()=>verifyGenericHir(changed),{code:'generic-hir-reference'});
+ assert.throws(()=>readGenericHir(Buffer.from(canonical(changed)+'\n')),{code:'generic-hir-reference'});
+});
+
 for(const family of ['conditional','mapped']) test('owned HIR cold entry reads the native byte range for recursive '+family,async t=>{
  const bytes=await fixture(`generic-recursive-${family}-hir-v7.json`);
  const core=await fixture(`generic-recursive-${family}-core-v7.mlir`);
