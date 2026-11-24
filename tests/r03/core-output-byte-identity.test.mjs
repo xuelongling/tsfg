@@ -59,6 +59,7 @@ function framedCore(text,tail=Buffer.alloc(0)){
 const valid=framedCore(core.toString('utf8'),Buffer.from('// Source note: \ufffd\n'));
 const malformed=framedCore(core.toString('utf8'),Buffer.concat([Buffer.from('// Source note: '),Buffer.of(255,10)]));
 const capture=process.env.TSFG_R03_CORE_PAIR_CAPTURE;
+const genericCapture=process.env.TSFG_R03_GENERIC_CORE_PAIR_CAPTURE;
 const closureCapture=process.env.TSFG_R03_CLOSURE_PAIR_CAPTURE;
 const finiteCapture=process.env.TSFG_R03_FINITE_PAIR_CAPTURE;
 const commonCapture=process.env.TSFG_R03_COMMON_PAIR_CAPTURE;
@@ -318,20 +319,27 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     const checked=readGenericHir(hirBytes),root=checked.closure.roots[0];
     const header=coreBytes.toString('utf8').split('\n',1)[0];
     const rootField='tsfg_core.function_id = "'+root+'"';
-    const otherField='tsfg_core.function_id = "sha256:80608d127848d931cf95b6f74401576cde929a49d0f2b89c97e6636b7161c4d4"';
+    const otherId='sha256:80608d127848d931cf95b6f74401576cde929a49d0f2b89c97e6636b7161c4d4';
+    const otherField='tsfg_core.function_id = "'+otherId+'"';
     assert.equal(root,'sha256:de5deb74229f008bb111bfb9140de6260737fcecfa13f252a01296f9c251006f');
     const options={core:artifact},wrongRoot={status:'tool-error',code:'r03-d-consumer',
       message:'r03-core-output: first generic function differs from the checked default root'};
     sub.after(()=>{stdout=valid;packetStdout=undefined;});
     // Model the printer's function region and own dictionary, with the checked
     // bool root first. The archived HIR supplies its real identity and order.
-    const operation=(name,type,fields,bodyFields='')=>'  "func.func"() <{function_type = ('+type+') -> '+type+
-      ', sym_name = "'+name+'"}> ({\n  ^bb0(%arg: '+type+'):\n    "func.return"(%arg)'+bodyFields+' : ('+type+') -> ()\n  }) {'+
+    const operation=(name,type,fields,bodyFields='',body='')=>'  "func.func"() <{function_type = ('+type+') -> '+type+
+      ', sym_name = "'+name+'"}> ({\n  ^bb0(%arg: '+type+'):\n'+body+'    "func.return"(%arg)'+bodyFields+' : ('+type+') -> ()\n  }) {'+
       fields+'} : () -> ()';
     const modeled=(...functions)=>framedCore([header,...functions,'}'].join('\n'));
-    const boolRoot=operation('route_bool','i1',rootField),other=operation('route_f64','f64',otherField);
-    const remaining=checked.functions.filter(fn=>fn.id!==root).map((fn,index)=>
-      operation('instance_'+index,'i1','tsfg_core.function_id = "'+fn.id+'"'));
+    const functionsById=new Map(checked.functions.map(fn=>[fn.id,fn]));
+    const definition=fn=>{
+      const type=fn.returnType.name==='bool'?'i1':'f64',argument=fn.body[0].value;
+      const callee=argument.kind==='call'?functionsById.get(argument.target):undefined;
+      const call=callee?`    %0 = "func.call"(%arg) <{callee = @${callee.linkageName}}> {tsfg_core.function_id = "${callee.id}", tsfg_core.signature_hash = "${callee.signatureHash}"} : (${type}) -> ${type}\n`:'';
+      return operation(fn.linkageName,type,`tsfg_core.function_id = "${fn.id}", tsfg_core.signature_hash = "${fn.signatureHash}"`,'',call);
+    };
+    const boolRoot=definition(functionsById.get(root)),other=definition(functionsById.get(otherId));
+    const remaining=checked.functions.filter(fn=>fn.id!==root).map(definition);
     const nondefault='sha256:3c570a6d34471b23176a384676fc7189d13b8c3befca039106f798fe8cb0a32c';
     assert.ok(checked.closure.roots.includes(nondefault));
     const omitted=remaining.findIndex(fn=>fn.includes(nondefault));
@@ -340,6 +348,57 @@ test('Core transport preserves valid bytes and rejects malformed stdout before d
     const accepted=await compileOwnedCore(checked,options);
     assert.equal(accepted.status,'ok');
     assert.deepEqual(Buffer.from(accepted.core,'utf8'),stdout);
+
+    await sub.test('owned generic Core binds each definition and ordered call to its checked HIR',async()=>{
+      const modeledBytes=modeled(boolRoot,...remaining);
+      const cases=[];
+      if(genericCapture){
+        for(const [family,expected] of [
+          ['conditional','b71a6fc1b1e4c561e344a87a89314119c692aa042c1da9fce0f123831327cd05'],
+          ['mapped','e49051ca88e7dd9c7e69912fd5d94150251607bbe3552bb134cd435c22cf0226'],
+        ]){
+          const [hirBytes,bytes]=await Promise.all([fixture(`generic-recursive-${family}-hir-v7.json`),
+            fs.readFile(path.join(genericCapture,family+'.stdout'))]);
+          assert.equal(sha256(bytes),'sha256:'+expected);
+          cases.push({hir:readGenericHir(hirBytes),bytes});
+        }
+      }
+      cases.push({hir:checked,bytes:modeledBytes});
+      const mismatch={status:'tool-error',code:'r03-d-consumer',
+        message:'r03-core-output: generic function binding differs from the checked HIR'};
+      for(const {hir,bytes} of cases){
+        const root=hir.functions.find(fn=>fn.id===hir.closure.roots[0]);
+        const original=hir.functions.find(fn=>fn.id===root.body[0].value.target);
+        const other=hir.functions.find(fn=>fn.id!==original.id&&fn.id!==root.id&&fn.signatureHash===original.signatureHash);
+        const text=bytes.toString('utf8');
+        const changedCall=text.replace('callee = @'+original.linkageName,'callee = @'+other.linkageName)
+          .replace('tsfg_core.function_id = "'+original.id+'"','tsfg_core.function_id = "'+other.id+'"');
+        const changedCallSymbol=text.replace('callee = @'+original.linkageName,'callee = @'+other.linkageName);
+        const changedDefinition=text.replace(/sym_name = "([^"]+)"/g,(property,symbol)=>
+          symbol===original.linkageName?`sym_name = "${other.linkageName}"`:
+            symbol===other.linkageName?`sym_name = "${original.linkageName}"`:property);
+        const changedType=text.replace('function_type = (i1) -> i1','function_type = (i1) -> f64');
+        const changedSignature=text.replace('tsfg_core.signature_hash = "'+root.signatureHash+'"',
+          'tsfg_core.signature_hash = "sha256:'+'f'.repeat(64)+'"');
+        const callRow=text.split('\n').find(line=>line.includes('callee = @'+original.linkageName));
+        const nestedCall=text.replace(callRow,callRow+'\n    "test.region"() ({\n'+callRow+'\n    }) : () -> ()');
+        stdout=bytes;
+        const result=await compileOwnedCore(hir,options);
+        assert.equal(result.status,'ok');
+        assert.deepEqual(Buffer.from(result.core,'utf8'),bytes);
+        for(const changed of [changedCall,changedCallSymbol,changedDefinition,changedType,changedSignature,nestedCall]){
+          assert.notEqual(changed,text);
+          const first=calls.length;
+          stdout=Buffer.from(changed);
+          const rejected=await compileOwnedCore(hir,options);
+          stdout=modeledBytes;
+          assert.equal(rejected.status,'tool-error');
+          assert.deepEqual(rejected,mismatch);
+          assert.deepEqual(calls.slice(first),[['--canonicalize']]);
+        }
+      }
+      stdout=modeledBytes;
+    });
 
     await sub.test('bytecode preserves the concrete function count',async()=>{
       const {hir:scalar}=stringCases()[0];

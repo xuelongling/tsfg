@@ -9,7 +9,7 @@ import { compilePackageHir } from "./generic-package-frontend.mjs";
 import { genericHirFormat, lowerGenericHir, prepareGenericCore } from "./generic-hir.mjs";
 export { compilePackageHir };
 import { buildHir, lowerHir, lowerFormalHir, prepareCommonCore } from "./hir.mjs";
-import { canonical, own, sha256 } from "./identity.mjs";
+import { canonical, own, scalarTypeIds, sha256 } from "./identity.mjs";
 import {readSystemQueryFactsAndContext} from './system-query-facts.mjs';
 import {checkQueryBatchSource,checkQueryCoreSource,checkQueryLlvmDialect,emitSystemQueryCore,escapeQueryCompilerBytes,systemQuerySystemIdentity} from './system-query-core.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
@@ -340,8 +340,12 @@ const coreModulePrefix='"builtin.module"() ({\n';
 function checkedCoreIdentity(closing,identityField) {
   const suffix='} : () -> ()';
   if(!closing.startsWith('}) {')||!closing.endsWith(suffix))return;
-  const fields=closing.slice(4,-suffix.length);
-  const tokens=/(?:^|,)[ \t]*(?:"((?:[^"\\]|\\.)*)"|(tsfg_core\.(?:input_identity|function_id)))[ \t]*=[ \t]*|"(?:[^"\\]|\\.)*"|[{}\[\]]/gu;
+  return checkedCoreDigest(closing.slice(4,-suffix.length),identityField);
+}
+
+/** @param {string} fields @param {string} identityField */
+function checkedCoreDigest(fields,identityField) {
+  const tokens=/(?:^|,)[ \t]*(?:"((?:[^"\\]|\\.)*)"|(tsfg_core\.(?:input_identity|function_id|signature_hash)))[ \t]*=[ \t]*|"(?:[^"\\]|\\.)*"|[{}\[\]]/gu;
   const digest=/"(sha256:[0-9a-f]{64})"/y;
   let depth=0,identity;
   for(const match of fields.matchAll(tokens)){
@@ -373,13 +377,17 @@ function requireCheckedCoreInput(core,inputIdentity,stage='r03-core-output') {
 }
 
 /** @param {string} core @param {number} moduleClose
- * @param {string} defaultRoot @param {readonly string[]} functionIds */
-function requireCheckedGenericFunctions(core,moduleClose,defaultRoot,functionIds) {
+ * @param {string} defaultRoot @param {ReturnType<typeof prepareGenericCore>['hir']['functions']} functions */
+function requireCheckedGenericFunctions(core,moduleClose,defaultRoot,functions) {
   // A registered generic Core module consists of function definitions. The
   // printer closes each region before printing that function's own fields.
-  const prefix='  "func.func"() <{',remaining=new Set(functionIds);
+  const prefix='  "func.func"() <{';
+  const checked=new Map(functions.map(fn=>[fn.id,fn])),remaining=new Set(checked.keys());
   const tokens=/"(?:[^"\\]|\\.)*"|[{}]/gu;
+  const call=/"func\.call"\([^\n)]*\) <\{callee = @(__tsfg_generic_v1_[0-9a-f]{64})\}> \{([^\n]*)\} : /y;
+  const coreType=id=>id===scalarTypeIds.bool?'i1':'f64';
   let cursor=coreModulePrefix.length;
+  let bindingsMatch=true;
   const inventoryError='r03-core-output: generic function inventory differs from the checked HIR';
   while(cursor<moduleClose){
     const first=cursor===coreModulePrefix.length;
@@ -388,19 +396,46 @@ function requireCheckedGenericFunctions(core,moduleClose,defaultRoot,functionIds
     const headerEnd=core.indexOf('\n',cursor);
     if(!core.startsWith(prefix,cursor)||headerEnd<0||!core.startsWith('}> ({',headerEnd-5))throw invalid();
     tokens.lastIndex=headerEnd+1;
+    const callSites=[];
     let depth=1,closing;
     for(let match; (match=tokens.exec(core))&&match.index<moduleClose;){
       if(match[0]==='{')depth++;
       else if(match[0]==='}'&&--depth===0){closing=match.index;break;}
+      else if(match[0]==='"func.call"'&&core[match.index+match[0].length]==='('){
+        bindingsMatch&&=depth===1;
+        callSites.push(match.index);
+      }
     }
     if(closing===undefined||!core.startsWith('\n  }) {',closing-3))throw invalid();
     const end=core.indexOf('\n',closing);
     if(end<0||end>=moduleClose)throw invalid();
-    const identity=checkedCoreIdentity(core.slice(closing,end),'tsfg_core.function_id');
+    const ending=core.slice(closing,end);
+    const identity=checkedCoreIdentity(ending,'tsfg_core.function_id');
     if(identity===undefined||(first&&identity!==defaultRoot)||!remaining.delete(identity))throw invalid();
+    const fn=checked.get(identity);
+    const parameters=fn.parameters.map(parameter=>coreType(parameter.type)).join(', ');
+    const header=`function_type = (${parameters}) -> ${coreType(fn.returnType.id)}, sym_name = "${fn.linkageName}"`;
+    const expectedCalls=[];
+    const collectCalls=expression=>{
+      if(expression.kind!=='call')return;
+      expression.arguments.forEach(collectCalls);
+      expectedCalls.push(checked.get(expression.target));
+    };
+    // A call is emitted after its argument evaluations, including nested calls.
+    collectCalls(fn.body[0].value);
+    bindingsMatch=bindingsMatch&&core.slice(cursor+prefix.length,headerEnd-5)===header
+      &&checkedCoreIdentity(ending,'tsfg_core.signature_hash')===fn.signatureHash
+      &&callSites.length===expectedCalls.length&&callSites.every((site,index)=>{
+        const target=expectedCalls[index];
+        call.lastIndex=site;
+        const actual=call.exec(core);
+        return actual?.[1]===target.linkageName&&checkedCoreDigest(actual[2],'tsfg_core.function_id')===target.id
+          &&checkedCoreDigest(actual[2],'tsfg_core.signature_hash')===target.signatureHash;
+      });
     cursor=end+1;
   }
   if(cursor!==moduleClose||remaining.size)throw new TypeError(inventoryError);
+  if(!bindingsMatch)throw new TypeError('r03-core-output: generic function binding differs from the checked HIR');
 }
 
 async function produceCore(hir, options, lower = undefined, context = undefined) {
@@ -433,7 +468,7 @@ async function produceCore(hir, options, lower = undefined, context = undefined)
     if(common)requireCommonCoreSelection(lowered,core.slice(moduleClose).trimEnd());
     if(exception)requireCoreMarkerStrings(lowered,core.slice(moduleClose).trimEnd(),
       'tsfg_core.exception_program',['hir','hir_hash'],'checked exception HIR differs');
-    if(generic)requireCheckedGenericFunctions(core,moduleClose,packetDefaultRoot,hir.closure.functions);
+    if(generic)requireCheckedGenericFunctions(core,moduleClose,packetDefaultRoot,hir.functions);
   }
   return { hir, executable, prefix, common, core, packetInput, packetDefaultRoot, packetFunctionCount };
 }
