@@ -2,19 +2,121 @@
 
 # tsfg Context
 
-tsfg 是面向游戏计算的独立静态语言。它采用 TypeScript 语法与部分类型工具，但不承诺 ECMAScript 运行时或 TypeScript 生态兼容。
+tsfg 是面向游戏计算的静态语言与工具链，以官方 TypeScript 前端和语言基线为基础，只引入明确的必要差异及 tsfg Syntax Extension；复用语言规则不表示提供 JS 运行时或完整 TypeScript 生态兼容。
 
 ## Language
 
 **tsfg Program**:
-使用 TypeScript 语法、通过 tsfg 静态语义检查并按 tsfg 运行时语义执行的程序。
+使用 TypeScript 语法基础及已规定的 tsfg Syntax Extension、通过 tsfg 静态语义检查并按 tsfg 运行时语义执行的程序。
 _Avoid_: TypeScript program, JavaScript program, TS script
+
+**tsfg Syntax Extension**:
+为满足已有 TypeScript 表达无法充分承载的实际 tsfg 需求而明确规定的语法扩展；不表示继承 JS 执行行为或允许任意语法差异。
+_Avoid_: Undocumented parser exception, new keyword without a language need
+
+**Compile-time Marker**:
+为不能由已有类型或分析结果充分表达的 tsfg 声明意图提供的少量静态标记；其语义由 tsfg 规定，不等同于运行用户 decorator 函数。
+_Avoid_: General decorator runtime, arbitrary macro, duplicated inferred layout or effects
+
+**Sealed Reference Type**:
+由 tsfg GC 管理的普通 class 类型，字段集合及单继承关系在编译期封闭，允许规定的派生与方法覆写；运行时对象身份不等于源码类型必须使用名义赋值规则。
+_Avoid_: Arbitrarily extensible JS object, fixed-layout value type, inheritance always forbidden
 
 **Execution Equivalence**:
 同一 tsfg 程序在解释器与同目标 AOT 严格模式下必须满足的结果关系：整数、trap 与控制流完全一致，浮点结果按位一致；fast-math、并行归约与 GPU 不属于该严格关系。
 _Avoid_: Approximately equivalent, usually identical
 
+**FrontendSnapshot**:
+特定源码输入与前端配置对应、独立拥有且不可变的 tsfg 前端分析数据，提供当前能力范围内的源码、符号、类型与诊断事实；不依赖上游会话存活，也不暴露 Program、AST、Checker 和缓存细节。
+_Avoid_: TypeScript Project Snapshot, source intake probe output, tsfg HIR
+
+**tsfg HIR**:
+表达 tsfg 程序高层语义的程序表示，保留源位置、高层类型、泛型、空值收窄、闭包和异常含义；不同于只提供前端分析事实的 FrontendSnapshot。
+_Avoid_: FrontendSnapshot, TypeScript AST, backend IR
+
+**tsfg Core IR**:
+完成语言语义归一化、具有显式控制流与类型的 SSA 程序表示，是字节码与原生后端共同消费的语义中枢；它不等同于运行时字节码或后端的 MLIR 表示。
+_Avoid_: TypeScript AST, VM-only semantics, AOT-only semantics
+
+**Compilation Closure**:
+一次 tsfg 编译所覆盖的明确输入、模块初始化、可调用入口及其依赖和可达特化实例组成的完整程序范围，包含宿主回调、热更和内核入口。
+_Avoid_: Main-only call graph, entire filesystem, runtime generic discovery
+
+**Host Semantic Contract**:
+正式宿主绑定对特定原生实现提供的版本化调用语义约束，描述其借用、回调保留和效果，构成 tsfg 跨宿主分析的明确可信输入。
+_Avoid_: ABI signature alone, source comment as proof, capability grant
+
+**Published Call Contract**:
+tsfg 可替换函数对调用方发布并保持稳定的调用语义上界；实际实现须满足该上界，它不等同于当前函数体的推导摘要。
+_Avoid_: Current body summary, silently expanded effects, directional hash match
+
+**tsfg String**:
+tsfg 引用平面中的不可变文本值，具有既定 TypeScript UTF-16 码元可观察语义并允许孤立代理码元；不等同于严格 UTF-8 字节视图。
+_Avoid_: JavaScript String wrapper, UTF-8 byte length as logical length
+
+**StringView**:
+tsfg 原生边界上按字节长度描述的严格 UTF-8 受控借用视图，其有效性受来源寿命和借用范围约束。
+_Avoid_: Arbitrary managed string pointer, WTF-8 interchange, retained unowned bytes
+
+**tsfg Array**:
+连续同构、共享容器身份的密集向量；普通下标读取有效元素返回元素类型 T，缺失索引触发语义 trap。
+_Avoid_: JavaScript sparse array, missing-read undefined sentinel, unchecked native load
+
+**Span Borrow**:
+tsfg 的 Span 或 ReadSpan 对特定拥有者有效元素范围的借用关系，活跃期间保持所借容器结构稳定；只读视图不表示冻结全部可写别名。
+_Avoid_: Owned container, copied snapshot, global readonly freeze
+
+**值平面**:
+承载固定布局值、组件、借用视图和原生容器的内存领域，不包含受管对象或隐式装箱。
+_Avoid_: 引用平面, JS 对象存储
+
+**引用平面**:
+承载由 tsfg GC 管理的普通类对象、闭包环境和字符串的内存领域。
+_Avoid_: 值平面, Zig 持有的受管裸指针
+
+### Language Conformance
+
+**Language Rule**:
+规定 tsfg 源程序合法性或执行含义的规范条款，以稳定 Rule ID 标识。
+_Avoid_: Backend convention, TypeScript acceptance implies tsfg acceptance
+
+**Conformance Corpus**:
+关联 Language Rule 的 tsfg 正例、负例及其 Semantic Oracle 的语料集合。
+_Avoid_: R00 smoke tests, backend agreement alone
+
+**Semantic Oracle**:
+独立于被测实现、用于裁决 tsfg 行为是否符合 Language Rule 的规范预期，包括类型化结果、必要的可观察效果、trap 或编译诊断。
+_Avoid_: Current compiler output, JavaScript reference execution, VM/AOT agreement
+
+**Diagnostic Code**:
+tsfg 编译诊断的稳定机器身份，与所涉及的 Language Rule 关联，不等同于可修改的错误文案。
+_Avoid_: TypeScript diagnostic number, Rule ID, error message text
+
+**Trap Code**:
+tsfg 执行 trap 的稳定机器身份，与所涉及的 Language Rule 关联。
+_Avoid_: Compiler diagnostic, process exit code, backend exception text
+
+**Semantic Fuel**:
+以 VM/AOT 共同遵守的语义计费点衡量的 tsfg 执行预算，不随后端物理指令数变化。
+_Avoid_: Bytecode instruction count, native instruction count, wall-clock timeout
+
+**Execution Abort**:
+因物理时限或内存限额等执行条件而中止的 tsfg 执行结果，不构成语言 Semantic Oracle 所要求的正常返回或语义 trap。
+_Avoid_: Semantic Fuel trap, successful conformance, host process crash
+
+**Managed Exception**:
+tsfg 受管逻辑层中的语言异常通道，不跨越 Zig ABI 或进入计算内核，与语义 trap 和物理执行中止相区分。
+_Avoid_: Trap Code, Execution Abort, native ABI exception
+
 ## Engineering Integration
+
+**Source Intake**:
+将特定外部来源转为已批准、可审计且可从锁定源码重建的工程输入的接入过程；按实际消费者分别验收，不等同于创建 Upstream Fork 或下载发行产物。
+_Avoid_: Repository exists, binary package installed, all candidate upstreams admitted
+
+**Intake Ledger**:
+按文件关联外部来源、上游基线身份、许可证、本地修改及对应验证依据的来源审计记录。
+_Avoid_: Repository license alone, detached patch queue, generated artifact inventory alone
 
 **Development Ready**:
 Windows 本机工程基础已通过 R00 验收、可以开展语言和运行时功能开发的状态；不表示最低平台认证或发布完成。

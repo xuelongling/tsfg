@@ -6,6 +6,8 @@ status: accepted
 
 # 用统一控制面编排原生构建系统
 
+适用范围补充（2026-09-10）：[ECP-0003](../proposals/0003-native-typescript-source-intake.md) 已批准为 TypeScript 原生源码 intake 纳入所需的锁定 Go 工具闭包。仍使用本决定的统一控制面，不改既有输入身份/离线边界；Go 的具体 profile 映射及构建接入尚待核验实施，不将下述 C/C++ 选项直接套用到 Go。
+
 `repo` 只负责物化多仓，`tsfg` 提供唯一公开的跨平台 prefetch、verify-workspace、build、test、package 与 repro-check 控制面，内部调用内容锁定的 Node 包管理器、`zig build`、CMake presets/toolchain files 与 Ninja；Bazel、Nix 和容器不构成规范性构建接口。Zig 编译 Zig 源码，Clang/LLD 编译 C/C++、LLVM/MLIR 并形成 ABI 基线；目标 SDK/sysroot 也属于闭包。具体 patch 版本属于 R00 章程和 `toolchains.lock.json`，不在 ADR 重复。每个分发物的内容摘要与解包 tree hash、每个权威 dependency-lock 的摘要进入 target-specific Toolchain Closure projection，经 JCS 形成完整 digest；URL/mirror 不是身份，系统 PATH 不提供回退。
 
 `debug` 映射到 Zig Debug 与 C/C++ `-O0`，保留断言、安全检查和完整调试信息；`release` 映射到 Zig ReleaseSafe 与 C/C++ `-O2`，保留边界/安全检查并同时生成 detached symbols。两种 profile 均禁止 LTO、PGO、fast-math 和 `-march=native`。`cl/link` 使用已锁定 MSVC closure 做兼容性 CI；R00 不启用未锁定的 GCC，后续若启用必须先把它作为独立 Toolchain Closure 纳入。这保持 LLVM/MLIR 的正式 CMake 路径并统一两类 Tier 1 ABI，代价是 tsfg 必须自行维护工具闭包、环境净化与跨构建系统的失败语义。

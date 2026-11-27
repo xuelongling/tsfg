@@ -41,9 +41,9 @@ tsfg 不支持以下内容：
 flowchart TD
     S[".ts 源码与 .d.ts 声明"] --> F["TypeScript 前端 + tsfg 语义检查"]
     F --> H["tsfg HIR"]
-    H --> C["tsfg Core IR"]
+    H --> C["tsfg Core IR（MLIR 承载）"]
     C --> B["tsfg Bytecode"]
-    C --> M["tsfg MLIR Dialect"]
+    C --> M["AOT lowering：tsfg / 官方 dialect"]
     B --> V["Zig 解释器"]
     M --> L["MLIR/LLVM 原生对象"]
     V --> R["Zig Runtime"]
@@ -64,7 +64,15 @@ flowchart TD
 
 ### TypeScript 前端
 
-前端按 R02a 实际 intake 分批接入微软 TypeScript 的 scanner、parser、AST、类型检查、控制流收窄、模块解析、诊断和 Language Service 代码。tsfg 在其后执行更严格的语义检查，并直接生成 tsfg HIR；流程中不存在 JavaScript 输出。
+以官方 TypeScript parser 及前端源码的 fork 为基础，默认沿用固定 TypeScript 7.0.2 基线的词法、语法、类型检查与语言行为；只对本架构及 [R01 语言契约](r01-language-contract.md)列出的必要差异客制化，不全量自建替代前端。支持矩阵表示实际 lowering/执行覆盖，不是逐项重新设计 TS 规则的许可。
+
+普通 TS 声明、类型和已有 API 优先，其余必要的编译期意图才采用少量 Compile-time Marker，注释主要用于文档。以下 `@value/@component/@abi/@system` 表达架构意图，具体位置与参数随真实消费者确定，不据此预建通用机制或函数位置扩展。
+
+R02a 已选择官方 7.0.2 原生 Go 前端源码作为首个 intake，所需 Go 工具纳入锁定闭包；这不使工程 TypeScript 依赖成为产品前端，也不将 Go 放入游戏发布运行时。具体 base 身份、来源审计和源码重建要求见 [R02a 规范](r02a-source-intake.md)；接口出口与实际构建仍须验收，不假定旧 Compiler API 或未来公开 API 可直接使用。
+
+语言基线升级须复核差异，它不等于工程工具依赖或实际源码 intake 的身份。前端按 R02a 接入官方 scanner、parser、AST、类型检查、控制流收窄、模块解析、诊断和 Language Service 代码，具体 commit、配置与接口路线须验证其符合语言基线；tsfg 再实施必要差异检查并生成 tsfg HIR，不产生 JavaScript。source → 官方前端 → HIR → Core IR → AOT lowering 是跨阶段方向：R01 负责规范与语料，R02a/R02b 负责源码与前端，R03 用 MLIR 基础设施承载自有 Core IR 语义，R07 负责向后端 dialect/LLVM 及机器码降低。
+
+R02b 的 `FrontendSnapshot` 采用独立拥有、不可变的产品数据，仅投影当前消费者需要的源码结构、符号、类型和诊断事实；下游不依赖上游会话存活，也不暴露上游内部对象。它不是完整 TypeScript AST 副本或 HIR；取舍见 [ADR-0014](adr/0014-owned-frontend-snapshot.md)，阶段决定见 [R02b 规范](r02b-frontend.md)。
 
 输入规则固定为：
 
@@ -80,16 +88,22 @@ flowchart TD
 | `i8…i64`、`u8…u64`、`isize`、`usize` | 定宽整数；算术按位宽回绕，除零和非法移位触发 trap |
 | `f16`、`f32`、`f64` | IEEE 浮点；`number` 固定等价于 `f64` |
 | `bool` | ABI 中固定为 `u8`，仅接受 `0` 和 `1` |
-| `T[]` / `Array<T>` | 连续、同构、带长度与容量的向量，不采用 JS 稀疏数组语义 |
-| `ReadSpan<T>` / `Span<T>` | 借用视图；函数返回和闭包捕获受逃逸检查约束 |
-| `string` | 不变 UTF-8 字符串；ABI 使用 `StringView { ptr, len }` |
+| `T[]` / `Array<T>` | 连续、同构、带长度与容量的密集向量；普通下标读取返回 T，缺失/越界在原生访问前语义 trap，不采用 JS 稀疏数组语义（[Q12 决定](adr/0021-checked-native-array-index-read.md)；详见 [R01 契约](r01-language-contract.md)） |
+| `ReadSpan<T>` / `Span<T>` | 借用视图；活跃期间所借容器结构保持稳定，返回和捕获受逃逸检查约束 |
+| `string` | 不可变受管文本，沿用 TS 码元语义，内部 canonical WTF-8 保值；StringView 另为严格 UTF-8 字节借用 |
 | `@value class` | 固定布局值类型 |
 | `@component class` | 固定布局 ECS 组件 |
-| 普通 `class` | 密封引用类型，由 tsfg GC 管理 |
+| 普通 `class` | 由 tsfg GC 管理的密封引用类型，字段固定、支持规定的单继承与覆写；源码赋值兼容性沿用 TS，不从运行时对象身份推导统一名义赋值限制 |
 | 联合类型 | 编译期联合或显式带标签联合；不生成隐式动态值 |
 | 泛型 | 全程序特化；原生 ABI 不暴露未特化泛型 |
 
 严格空值检查始终开启。字段集合在类型定义结束后固定。异常只存在于受管逻辑层，不穿越 Zig ABI，也不进入计算内核。异步函数不进入计算内核。
+
+值类型与组件保留明确身份及固定布局语义，普通 class 的结构化类型检查不使 GC 对象变成值类型。联合的标签/布局要求不自动要求所有源码联合手写判别字段。
+
+2026-09-30 R03 Q10 已确认：普通 String 保留既定 TS UTF-16 码元值域及操作，内部 canonical WTF-8 不改变孤立代理码元或进行 Unicode 文本归一化；StringView 使用严格 UTF-8 和字节长度，不能严格输出时显式失败，有损转换由调用方明确选取。源编码、字符串逻辑语义及视图借用分开验证；编码一致不保证 GC 保活、地址稳定或任意 String 自动零复制跨界。取舍见 [ADR-0019](adr/0019-lossless-strings-strict-utf8-views.md)。
+
+R03 Q11 已确认活跃 Span Borrow 保持所借容器长度/容量及缓冲区稳定，任何别名不得结构变更、释放或转移；借用按真实最后使用点结束。串行已有元素写入仍可对视图可见，ReadSpan 不表示全局冻结；跨调用与别名安全须静态证明，不新增动态兜底，不由此要求全部普通索引边界静态可证。取舍见 [ADR-0020](adr/0020-stable-container-during-span-borrow.md)，完整实现与验收边界见 [R03 澄清记录](r03-ir-normalization.md)。
 
 ## 内存模型与 Zig ABI
 
@@ -124,9 +138,17 @@ HIR 保留 TypeScript 源位置、泛型、空值收窄、闭包、异常和高�
 
 Core IR 是类型化 SSA 表示，完成泛型特化、闭包显式化、值/引用分类、逃逸分析、借用检查、效果分析和异常边转换。字节码与原生后端都从 Core IR 降低，禁止两套语义实现。
 
+2026-09-30 用户确认 R03 中端采用 C++，用 MLIR 基础设施承载自有 Core IR，HIR 保留独立高层职责；R02a 的 MLIR/LLVM 源码准入须在 R03 实际使用前完成。框架承载方式不改变 R03 与 R07 的语义阶段，现有 LLVM 工具归档也不证明源码已接入；取舍见 [ADR-0015](adr/0015-mlir-backed-core-ir.md)，已定边界见 [R03 规范](r03-ir-normalization.md)。
+
+全程序特化以明确 Compilation Closure 为范围，覆盖初始化及宿主导出/回调、热更和内核入口。泛型包保留可继续特化的类型化定义，执行 Core IR 只含具体实例；强制借用/效果安全边界无法证明时明确拒绝相关操作，分析未实现不能冒充证明失败。语言异常沿用 TS 的 catch/finally；语义 trap 和 Execution Abort 终止请求时不运行用户 finally，Runtime 负责自身必要资源清理。
+
+借用/效果分析对可分析 tsfg 实现推导真实摘要；不可分析原生调用由正式绑定提供版本化且绑定具体实现身份的 Host Semantic Contract，以实现审查及真实测试建立可信输入。ABI 签名、源码注释或宿主能力授权不单独构成语义证明；缺失/不匹配时按适用静态边界拒绝，普通受管调用保留保守分析及能力约束。已定职责见 [R03 澄清记录](r03-ir-normalization.md)。
+
+R03 必须完整交付其语义归一化职责；分步接入语言能力只决定实施顺序，不缩减阶段范围。各切片直接建设正式 HIR/Core IR 和分析流水线，执行验收接入正式产品后端，不另建临时解释器代替尚未就绪的消费者；缺少相应证据时保持未完成，完整关闭口径见 Roadmap R03。
+
 ### MLIR/LLVM 路径
 
-tsfg 定义小型 `tsfg` dialect，保留下列领域操作：
+R07 将已完成语义归一化的 Core IR 降低为适合后端的 tsfg/官方 dialect，并继续向 LLVM 和机器码降低。Core IR 采用 MLIR 承载不表示已经完成该后端阶段。tsfg 的领域操作保留：
 
 - `tsfg.handle`、`tsfg.safepoint`：受管引用与 GC；
 - `tsfg.call_hot`：热更函数调用；
@@ -180,6 +202,8 @@ FunctionCell = {
 
 闭包保存 `FunctionId`，不保存代码地址。静态状态保存于独立、带 schema hash 的状态块。函数签名、捕获布局或状态 schema 变化时，函数级补丁直接拒绝；数据迁移属于模块重载，不伪装成函数热更。
 
+可替换函数的 Published Call Contract 是固定保守调用上界，与当前实现的推导摘要分开。新实现满足上界时，效果收窄保持契约及 hash 不变；超界扩展须重分析调用方并协调更新。调用方及内核/并行安全分析采用发布上界，签名/效果的 exact-match seam 仍比较契约身份，不依赖实现暂时收窄而静默放宽安全条件；取舍见 [ADR-0018](adr/0018-fixed-published-call-contracts.md)。
+
 ## 高性能游戏计算框架
 
 计算框架直接使用 TypeScript 语法、类型系统和编译器效果分析：
@@ -228,7 +252,7 @@ tsfg 不嵌入其他语言运行时，也不把外部编译器当作黑盒子调
 
 | 来源 | 候选复用范围 | 明确排除 |
 |---|---|---|
-| TypeScript | scanner、parser、AST、类型检查、控制流收窄、模块解析、Language Service、source map | JS emitter、JS 运行时假设、`allowJs` 路径 |
+| TypeScript | scanner、parser、AST、类型检查、控制流收窄、模块解析、Language Service、source map；分析/诊断必需的共享 printer 和包级构建依赖 | 产品入口可达的 JS emitter、JS 运行时假设、`allowJs` 路径 |
 | scriptc | TS 到类型化 IR 的降低结构、静态子集诊断、IR 序列化与差分测试方法 | QuickJS 动态岛、Node API、JS 兼容层、仅 `f64` 的数值模型、其运行时内存模型 |
 | Mojo | ownership/borrow 分析、值类型 passability、泛型特化、SIMD 抽象、MLIR dialect 组织、CPU/GPU lowering 与诊断实现 | Mojo 语法前端、Python 兼容层、MAX 及其运行时 |
 | MLIR | ODS、类型与操作接口、PassManager、PatternRewriter、Dialect Conversion、DataLayout、官方 dialect 与 LLVM IR 转换 | MLIR 字节码运行时 |
@@ -237,6 +261,8 @@ tsfg 不嵌入其他语言运行时，也不把外部编译器当作黑盒子调
 | WAMR / Porffor | 预解码、tier 切换、代码缓存、AOT 差分测试实现 | Wasm 作为 tsfg 语义层、JS 前端与 JS 运行时 |
 
 本表是候选参考范围，不是全部引入清单。只为当前实际编译消费的批准来源建立同级 fork；仅参考算法/测试方法的来源记录 attribution，不建立虚假源码依赖。任何来源是否可迁入仍需在实际 intake 时审查，不能从本表推定许可证允许或源码可用。
+
+R02a 已确认：fork 新建 tsfg 特性分支后直接修改必要源码，不强制只加 wrapper，也不另立脱离 Git 历史的补丁队列。TypeScript 内部包级耦合不自动等于产品支持 JS；必要共享代码可以参与编译器构建，但必须以消费/产物检查和负例证明产品入口不能启用 JS 输入、输出或运行时回退，不能只依赖调用者选择 noEmit。无法证明隔离时作最小拆分；规则详见 [R02a 规范](r02a-source-intake.md)。
 
 所有迁入代码保留各自许可证和 NOTICE；按文件记录和检查来源。许可证不清晰的文件不进入 tsfg。新增实现必须有可维护源码、真实构建输入和消费者，不以生成物、合成 fixture 或不可审计黑盒替代。
 
@@ -264,7 +290,7 @@ tsfg 不嵌入其他语言运行时，也不把外部编译器当作黑盒子调
 
 ## 结论
 
-tsfg 的正确形态不是“嵌入一个 TypeScript VM”，而是“自建 TypeScript 语法的静态游戏语言”：TypeScript 负责源码与编辑器体验，tsfg Core IR 统一解释器和原生语义，MLIR/LLVM 负责优化与机器码，Zig 负责宿主、运行时和任务系统。固定布局值平面解决 Zig 互操作，受管引用平面隔离 GC，FunctionCell 解决函数热更新，编译器内建 Query/Job 语义解决高性能游戏计算。
+tsfg 是复用官方 TypeScript 前端、对必要游戏计算语义进行客制化的静态工具链，不是嵌入 JS/TS 运行时，也不是从零重写 parser。TypeScript 负责源码与编辑器体验，tsfg Core IR 统一解释器和原生语义，MLIR/LLVM 负责优化与机器码，Zig 负责宿主、运行时和任务系统。固定布局值平面解决 Zig 互操作，受管引用平面隔离 GC，FunctionCell 解决函数热更新，编译器内建 Query/Job 语义解决高性能游戏计算。
 
 ## 参考基础设施
 
