@@ -1,0 +1,22 @@
+{
+  "family": "tsfg.common-program-instance-execution",
+  "version": 1,
+  "status": "Active Common20 execution admission for initialized instances and single-source-call-v1 GPU leases",
+  "wire": {
+    "version": 20,
+    "capability": 1020,
+    "schema": "contracts/common-program-bytecode-development.schema.json",
+    "schemaHash": "sha256:08b3b4b43f12a7b7a86fe89ebe0c16b1d0a5585bdcac6569f00cabd5fed4c775"
+  },
+  "runtimeAdmission": {
+    "implementation": "runtime/common-instance.zig:CommonInstance.admit",
+    "cAbi": "runtime/common-instance.zig:tsfg_common20_*",
+    "gpuLease": "compiler/common20-gpu-source-lease.cpp:Common20GpuSourceLease"
+  },
+  "invariants": [
+    "CommonInstance.admit validates magic, wire version 20, capability 1020, SHA-256 schema hash, payload integrity, target, inputIdentity, scopeDigest, and publishedDigest before creating an instance.",
+    "Module initialization executes once in dependency order and persists initialized global slots across subsequent requests.",
+    "At most one exclusive GPU/Host lease may be active per CommonInstance; writeback validates all writable targets atomically before committing any slot.",
+    "Traps and device failures perform zero global writes and preserve original diagnostic codes, rule identities, source anchors, and post-failure budgets."
+  ]
+}
