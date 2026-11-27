@@ -8,3 +8,4 @@ pub const Access = @import("jobs/store.zig").Access;
 pub const Selection = @import("jobs/store.zig").Selection;
 pub const query_tmeta = @import("jobs/query_tmeta.zig");
 pub const query_effects = @import("jobs/query_effects.zig");
+pub const code_lease = @import("jobs/code_lease.zig");
