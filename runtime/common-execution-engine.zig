@@ -98,6 +98,7 @@ const ObjectRecord = struct {
     type_id: u64,
     initialized: bool,
     scalars: []u64,
+    scalar_tags: []u16, // tag per scalar/tagged field slot for uniform Common20 Core IR execution
     ref_ids: []u64, // parallel handle ids for ref edges (also wired into ManagedHeap edges!)
 };
 
@@ -169,6 +170,7 @@ pub const Engine = struct {
         for (self.objects.items) |obj| {
             self.heap.release(obj.handle) catch {};
             self.allocator.free(obj.scalars);
+            self.allocator.free(obj.scalar_tags);
             self.allocator.free(obj.ref_ids);
         }
         self.objects.deinit(self.allocator);
@@ -274,8 +276,16 @@ pub const Engine = struct {
             return 0;
         };
         @memset(scalars, 0);
+        const scalar_tags = self.allocator.alloc(u16, meta.scalar_fields) catch {
+            self.allocator.free(scalars);
+            self.heap.release(h) catch {};
+            self.setTrap(.oom);
+            return 0;
+        };
+        @memset(scalar_tags, 0);
         const refs = self.allocator.alloc(u64, meta.ref_fields) catch {
             self.allocator.free(scalars);
+            self.allocator.free(scalar_tags);
             self.heap.release(h) catch {};
             self.setTrap(.oom);
             return 0;
@@ -286,15 +296,96 @@ pub const Engine = struct {
             .type_id = type_id,
             .initialized = false,
             .scalars = scalars,
+            .scalar_tags = scalar_tags,
             .ref_ids = refs,
         }) catch {
             self.allocator.free(scalars);
+            self.allocator.free(scalar_tags);
             self.allocator.free(refs);
             self.heap.release(h) catch {};
             self.setTrap(.oom);
             return 0;
         };
         return @intCast(self.objects.items.len);
+    }
+
+    pub fn cloneObject(self: *Engine, src_id: u64) u64 {
+        if (self.isAborted()) return 0;
+        if (src_id == 0 or src_id > self.objects.items.len) {
+            self.setTrap(.invalid_handle);
+            return 0;
+        }
+        const src_type = self.objects.items[@intCast(src_id - 1)].type_id;
+        const dst_id = self.allocObject(src_type);
+        if (dst_id == 0) return 0;
+        const src = &self.objects.items[@intCast(src_id - 1)];
+        const dst = &self.objects.items[@intCast(dst_id - 1)];
+        @memcpy(dst.scalars, src.scalars);
+        @memcpy(dst.scalar_tags, src.scalar_tags);
+        @memcpy(dst.ref_ids, src.ref_ids);
+        dst.initialized = src.initialized;
+        for (dst.ref_ids, 0..) |ref_id, idx| {
+            if (ref_id != 0 and ref_id <= self.objects.items.len) {
+                self.heap.setEdge(dst.handle, @intCast(idx), self.objects.items[@intCast(ref_id - 1)].handle) catch {};
+            }
+        }
+        if (dst.scalars.len > 0) {
+            self.heap.write(dst.handle, dst.type_id, dst.scalars[0]) catch {};
+        }
+        return dst_id;
+    }
+
+    pub fn objSetField(self: *Engine, obj_id: u64, field_idx: u32, val: TaggedValue, allow_uninit: bool) void {
+        if (self.isAborted()) return;
+        if (obj_id == 0 or obj_id > self.objects.items.len) {
+            self.setTrap(.invalid_handle);
+            return;
+        }
+        const rec = &self.objects.items[@intCast(obj_id - 1)];
+        if (!allow_uninit and !rec.initialized) {
+            self.setTrap(.tdz_uninitialized);
+            return;
+        }
+        if (field_idx >= rec.scalars.len) {
+            self.setTrap(.bounds);
+            return;
+        }
+        rec.scalars[field_idx] = val.payload;
+        rec.scalar_tags[field_idx] = val.tag;
+        if (field_idx == 0) {
+            self.heap.write(rec.handle, rec.type_id, val.payload) catch {};
+        }
+        if (val.tag == @intFromEnum(Tag.ref) and field_idx < rec.ref_ids.len) {
+            if (val.payload != 0 and val.payload <= self.objects.items.len) {
+                rec.ref_ids[field_idx] = val.payload;
+                self.heap.setEdge(rec.handle, field_idx, self.objects.items[@intCast(val.payload - 1)].handle) catch {};
+            } else {
+                rec.ref_ids[field_idx] = 0;
+                self.heap.setEdge(rec.handle, field_idx, null) catch {};
+            }
+        }
+    }
+
+    pub fn objGetField(self: *Engine, obj_id: u64, field_idx: u32) TaggedValue {
+        if (self.isAborted()) return TaggedValue.undef();
+        if (obj_id == 0 or obj_id > self.objects.items.len) {
+            self.setTrap(.invalid_handle);
+            return TaggedValue.undef();
+        }
+        const rec = &self.objects.items[@intCast(obj_id - 1)];
+        if (!rec.initialized) {
+            self.setTrap(.tdz_uninitialized);
+            return TaggedValue.undef();
+        }
+        if (field_idx >= rec.scalars.len) {
+            self.setTrap(.bounds);
+            return TaggedValue.undef();
+        }
+        _ = self.heap.read(rec.handle, rec.type_id) catch {
+            self.setTrap(.invalid_handle);
+            return TaggedValue.undef();
+        };
+        return .{ .tag = rec.scalar_tags[field_idx], .payload = rec.scalars[field_idx] };
     }
 
     pub fn markObjectInitialized(self: *Engine, obj_id: u64) void {
@@ -507,8 +598,12 @@ pub const Engine = struct {
     }
 
     pub fn envInit(self: *Engine, env_id: u64, slot: u32, val: TaggedValue) void {
+        self.envInitWithPolicy(env_id, slot, val, false);
+    }
+
+    pub fn envInitWithPolicy(self: *Engine, env_id: u64, slot: u32, val: TaggedValue, allow_admitted_span: bool) void {
         if (self.isAborted()) return;
-        if (val.tag == @intFromEnum(Tag.span)) {
+        if (!allow_admitted_span and val.tag == @intFromEnum(Tag.span)) {
             self.setTrap(.span_escape);
             return;
         }
@@ -526,8 +621,12 @@ pub const Engine = struct {
     }
 
     pub fn envStore(self: *Engine, env_id: u64, slot: u32, val: TaggedValue) void {
+        self.envStoreWithPolicy(env_id, slot, val, false);
+    }
+
+    pub fn envStoreWithPolicy(self: *Engine, env_id: u64, slot: u32, val: TaggedValue, allow_admitted_span: bool) void {
         if (self.isAborted()) return;
-        if (val.tag == @intFromEnum(Tag.span)) {
+        if (!allow_admitted_span and val.tag == @intFromEnum(Tag.span)) {
             self.setTrap(.span_escape);
             return;
         }
@@ -941,8 +1040,14 @@ export fn tsfg_eng_env_parent(e: ?*Engine, env_id: u64) u64 {
 export fn tsfg_eng_env_init(e: ?*Engine, env_id: u64, slot: u32, tag: u16, payload: u64) void {
     if (e) |eng| eng.envInit(env_id, slot, .{ .tag = tag, .payload = payload });
 }
+export fn tsfg_eng_env_init_admitted(e: ?*Engine, env_id: u64, slot: u32, tag: u16, payload: u64) void {
+    if (e) |eng| eng.envInitWithPolicy(env_id, slot, .{ .tag = tag, .payload = payload }, true);
+}
 export fn tsfg_eng_env_store(e: ?*Engine, env_id: u64, slot: u32, tag: u16, payload: u64) void {
     if (e) |eng| eng.envStore(env_id, slot, .{ .tag = tag, .payload = payload });
+}
+export fn tsfg_eng_env_store_admitted(e: ?*Engine, env_id: u64, slot: u32, tag: u16, payload: u64) void {
+    if (e) |eng| eng.envStoreWithPolicy(env_id, slot, .{ .tag = tag, .payload = payload }, true);
 }
 export fn tsfg_eng_env_load_payload(e: ?*Engine, env_id: u64, slot: u32) u64 {
     return if (e) |eng| eng.envLoad(env_id, slot).payload else 0;
@@ -1012,4 +1117,75 @@ export fn tsfg_eng_span_release(e: ?*Engine, span_id: u64) void {
 }
 export fn tsfg_eng_check_return_escape(e: ?*Engine, tag: u16, payload: u64) u64 {
     return if (e) |eng| eng.checkReturnNoSpanEscape(.{ .tag = tag, .payload = payload }).payload else 0;
+}
+export fn tsfg_eng_clone_obj(e: ?*Engine, obj_id: u64) u64 {
+    return if (e) |eng| eng.cloneObject(obj_id) else 0;
+}
+export fn tsfg_eng_obj_type_id(e: ?*Engine, obj_id: u64) u64 {
+    return if (e) |eng| eng.objTypeId(obj_id) else 0;
+}
+export fn tsfg_eng_obj_set_field(e: ?*Engine, obj_id: u64, field_idx: u32, tag: u16, payload: u64, allow_uninit: u32) void {
+    if (e) |eng| eng.objSetField(obj_id, field_idx, .{ .tag = tag, .payload = payload }, allow_uninit != 0);
+}
+export fn tsfg_eng_obj_get_field_tag(e: ?*Engine, obj_id: u64, field_idx: u32) u16 {
+    return if (e) |eng| eng.objGetField(obj_id, field_idx).tag else 0;
+}
+export fn tsfg_eng_obj_get_field_payload(e: ?*Engine, obj_id: u64, field_idx: u32) u64 {
+    return if (e) |eng| eng.objGetField(obj_id, field_idx).payload else 0;
+}
+export fn tsfg_eng_global_set(e: ?*Engine, idx: u32, tag: u16, payload: u64) void {
+    const eng = e orelse return;
+    if (eng.isAborted()) return;
+    if (idx >= eng.globals.len) {
+        eng.setTrap(.bounds);
+        return;
+    }
+    eng.globals[idx] = .{ .tag = tag, .payload = payload };
+    eng.global_init[idx] = true;
+}
+export fn tsfg_eng_global_get_tag(e: ?*Engine, idx: u32) u16 {
+    const eng = e orelse return 0;
+    if (eng.isAborted()) return 0;
+    if (idx >= eng.globals.len) {
+        eng.setTrap(.bounds);
+        return 0;
+    }
+    if (!eng.global_init[idx]) {
+        eng.setTrap(.tdz_uninitialized);
+        return 0;
+    }
+    return eng.globals[idx].tag;
+}
+export fn tsfg_eng_global_get_payload(e: ?*Engine, idx: u32) u64 {
+    const eng = e orelse return 0;
+    if (eng.isAborted()) return 0;
+    if (idx >= eng.globals.len) {
+        eng.setTrap(.bounds);
+        return 0;
+    }
+    if (!eng.global_init[idx]) {
+        eng.setTrap(.tdz_uninitialized);
+        return 0;
+    }
+    return eng.globals[idx].payload;
+}
+export fn tsfg_eng_arr_get_tag(e: ?*Engine, id: u64, idx: u32) u16 {
+    return if (e) |eng| eng.arrayGet(id, idx).tag else 0;
+}
+export fn tsfg_eng_span_get_tag(e: ?*Engine, id: u64, idx: u32) u16 {
+    return if (e) |eng| eng.spanGet(id, idx).tag else 0;
+}
+export fn tsfg_eng_read_elem_tag(e: ?*Engine, recv_tag: u16, recv_id: u64, idx: u32) u16 {
+    const eng = e orelse return 0;
+    if (recv_tag == @intFromEnum(Tag.span)) return eng.spanGet(recv_id, idx).tag;
+    if (recv_tag == @intFromEnum(Tag.array)) return eng.arrayGet(recv_id, idx).tag;
+    eng.setTrap(.invalid_handle);
+    return 0;
+}
+export fn tsfg_eng_read_elem_payload(e: ?*Engine, recv_tag: u16, recv_id: u64, idx: u32) u64 {
+    const eng = e orelse return 0;
+    if (recv_tag == @intFromEnum(Tag.span)) return eng.spanGet(recv_id, idx).payload;
+    if (recv_tag == @intFromEnum(Tag.array)) return eng.arrayGet(recv_id, idx).payload;
+    eng.setTrap(.invalid_handle);
+    return 0;
 }
