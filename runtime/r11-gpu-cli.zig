@@ -100,11 +100,19 @@ pub fn main(init: std.process.Init) !void {
     var res_v1: [count]f32 = undefined;
     try dev.downloadBytes(buf_out_v1, std.mem.sliceAsBytes(&res_v1));
 
-    // Dispatch & wait v2 on the SAME Vulkan device
-    var disp2 = try dev.dispatchAsync(buf_a, buf_b, buf_out_v2, @intCast(count / 64));
-    try dev.waitAndComplete(&disp2);
+    // Dispatch & wait v2 SIX consecutive times (exceeding maxSets=4!) to prove descriptor set & command buffer recycling!
+    for (0..6) |_| {
+        var disp2 = try dev.dispatchAsync(buf_a, buf_b, buf_out_v2, @intCast(count / 64));
+        try dev.waitAndComplete(&disp2);
+    }
     var res_v2: [count]f32 = undefined;
     try dev.downloadBytes(buf_out_v2, std.mem.sliceAsBytes(&res_v2));
+
+    // Verify exact OOM budget accounting: allocate & destroy a temp buffer and confirm zero budget drift!
+    const mem_before = dev.memory_used_bytes;
+    var probe_buf = try dev.createBuffer(100);
+    dev.destroyBuffer(&probe_buf);
+    if (dev.memory_used_bytes != mem_before) return error.VulkanCallFailed;
 
     // Export sealed pipeline cache, corrupt 1 byte, verify rejection, then reload valid cache!
     const valid_cache = try dev.exportSealedPipelineCache(allocator);

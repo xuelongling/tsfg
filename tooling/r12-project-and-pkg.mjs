@@ -135,10 +135,14 @@ export async function buildTsfgProject(projectDir, opts = {}) {
   const manifestPath = path.join(projectDir, 'tsfg.project.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
 
-  // 1. Read & verify all `.ts` entry sources (strictly reject JS/any/eval/Proxy)
+  // 1. Read & verify all `.ts` entry sources (strictly reject path traversal and JS/any/eval/Proxy)
+  const resolvedRoot = path.resolve(projectDir);
   const sources = [];
   for (const rel of [...(manifest.entries ?? [])].sort()) {
-    const abs = path.join(projectDir, rel);
+    const abs = path.resolve(projectDir, rel);
+    if (!abs.startsWith(resolvedRoot + path.sep)) {
+      throw new TypeError(`r12-path-escape: entry '${rel}' escapes project root`);
+    }
     const text = await readFile(abs, 'utf8');
     const diags = checkSourceTsfgCompliance(rel, text);
     if (diags.length > 0) {

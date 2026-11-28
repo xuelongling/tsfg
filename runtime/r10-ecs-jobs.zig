@@ -251,6 +251,7 @@ pub const EcsWorld = struct {
         const old_chunk_idx = rec_ro.chunk_idx;
         const old_row = rec_ro.row;
         const old_mask = self.archetypes.items[old_arch].mask;
+        if (add_mask == 0 or (add_mask & ~(COMP_POS | COMP_VEL | COMP_TAG)) != 0) return error.InvalidChunkState;
         if ((old_mask & add_mask) != 0) return error.ComponentAlreadyPresent;
 
         const old_c = self.archetypes.items[old_arch].chunks.items[old_chunk_idx];
@@ -271,6 +272,41 @@ pub const EcsWorld = struct {
         new_c.vel_x[new_loc.row] = if ((add_mask & COMP_VEL) != 0) (vel orelse Velocity{ .x = 0, .y = 0 }).x else saved_vx;
         new_c.vel_y[new_loc.row] = if ((add_mask & COMP_VEL) != 0) (vel orelse Velocity{ .x = 0, .y = 0 }).y else saved_vy;
         new_c.tag_kind[new_loc.row] = if ((add_mask & COMP_TAG) != 0) (tag orelse Tag{ .kind = 0 }).kind else saved_tk;
+
+        self.swapRemoveRow(old_arch, old_chunk_idx, old_row);
+        self.records.items[e.index].arch_idx = new_arch;
+        self.records.items[e.index].chunk_idx = new_loc.chunk_idx;
+        self.records.items[e.index].row = new_loc.row;
+    }
+
+    /// Structural change: migrate an entity to a smaller archetype removing `remove_mask` while preserving remaining columns!
+    pub fn removeComponent(self: *EcsWorld, e: EntityHandle, remove_mask: CompMask) EcsError!void {
+        const rec_ro = try self.validateEntity(e);
+        const old_arch = rec_ro.arch_idx;
+        const old_chunk_idx = rec_ro.chunk_idx;
+        const old_row = rec_ro.row;
+        const old_mask = self.archetypes.items[old_arch].mask;
+        if (remove_mask == 0 or (old_mask & remove_mask) != remove_mask) return error.ComponentMissing;
+        const new_mask = old_mask & ~remove_mask;
+        if (new_mask == 0) return error.InvalidChunkState;
+
+        const old_c = self.archetypes.items[old_arch].chunks.items[old_chunk_idx];
+        const saved_px = old_c.pos_x[old_row];
+        const saved_py = old_c.pos_y[old_row];
+        const saved_vx = old_c.vel_x[old_row];
+        const saved_vy = old_c.vel_y[old_row];
+        const saved_tk = old_c.tag_kind[old_row];
+
+        const new_arch = try self.getOrCreateArchetype(new_mask);
+        const new_loc = try self.allocRowInArchetype(new_arch);
+        const new_c = self.archetypes.items[new_arch].chunks.items[new_loc.chunk_idx];
+
+        new_c.entities[new_loc.row] = e;
+        new_c.pos_x[new_loc.row] = if ((new_mask & COMP_POS) != 0) saved_px else 0;
+        new_c.pos_y[new_loc.row] = if ((new_mask & COMP_POS) != 0) saved_py else 0;
+        new_c.vel_x[new_loc.row] = if ((new_mask & COMP_VEL) != 0) saved_vx else 0;
+        new_c.vel_y[new_loc.row] = if ((new_mask & COMP_VEL) != 0) saved_vy else 0;
+        new_c.tag_kind[new_loc.row] = if ((new_mask & COMP_TAG) != 0) saved_tk else 0;
 
         self.swapRemoveRow(old_arch, old_chunk_idx, old_row);
         self.records.items[e.index].arch_idx = new_arch;
@@ -342,6 +378,7 @@ pub const EcsWorld = struct {
         var off: usize = 12;
         for (0..count) |_| {
             const mask = std.mem.readInt(u32, bytes[off..][0..4], .little);
+            if (mask == 0 or (mask & ~(COMP_POS | COMP_VEL | COMP_TAG)) != 0) return error.CorruptSnapshot;
             const px: f32 = @bitCast(std.mem.readInt(u32, bytes[off + 4 ..][0..4], .little));
             const py: f32 = @bitCast(std.mem.readInt(u32, bytes[off + 8 ..][0..4], .little));
             const vx: f32 = @bitCast(std.mem.readInt(u32, bytes[off + 12 ..][0..4], .little));
@@ -677,6 +714,11 @@ test "R10 ECS archetype storage, generation handles, structural migration, seria
     try std.testing.expectEqual(@as(f32, 1.5), p1.x);
     try std.testing.expectEqual(@as(i32, 42), t1.kind);
 
+    // Structural removal: remove Tag from e1 (migrates back, preserves Position!)
+    try world.removeComponent(e1, COMP_TAG);
+    try std.testing.expectError(error.ComponentMissing, world.getTag(e1));
+    try std.testing.expectEqual(@as(f32, 1.5), (try world.getPosition(e1)).x);
+
     // Despawn & stale handle rejection
     try world.despawn(e1);
     try std.testing.expectError(error.StaleEntity, world.getPosition(e1));
@@ -687,12 +729,17 @@ test "R10 ECS archetype storage, generation handles, structural migration, seria
     try std.testing.expect(e3.generation != e1.generation);
     try std.testing.expectError(error.StaleEntity, world.getPosition(e1));
 
-    // Deterministic binary serialization round-trip
+    // Deterministic binary serialization round-trip + corrupt component mask rejection
     const snap = try world.serialize(allocator);
     defer allocator.free(snap);
     var restored = try EcsWorld.deserialize(allocator, snap);
     defer restored.deinit();
     try std.testing.expectEqual(world.live_count, restored.live_count);
+
+    const bad_snap = try allocator.dupe(u8, snap);
+    defer allocator.free(bad_snap);
+    std.mem.writeInt(u32, bad_snap[12..16], 0x8000, .little);
+    try std.testing.expectError(error.CorruptSnapshot, EcsWorld.deserialize(allocator, bad_snap));
 
     // Column borrow conflict negative check: holding Write<Position> rejects concurrent Read or Write!
     var chunks: std.ArrayListUnmanaged(*Chunk) = .empty;

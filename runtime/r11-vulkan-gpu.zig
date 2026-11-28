@@ -91,6 +91,7 @@ const VK_PIPELINE_BIND_POINT_COMPUTE: u32 = 1;
 const VK_COMMAND_BUFFER_LEVEL_PRIMARY: u32 = 0;
 const VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT: u32 = 0x00000001;
 const VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT: u32 = 0x00000002;
+const VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT: u32 = 0x00000001;
 
 const VkApplicationInfo = extern struct {
     sType: u32 = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -369,6 +370,7 @@ const VkFns = struct {
     CreateDescriptorPool: *const fn (VkDevice, *const VkDescriptorPoolCreateInfo, ?*const anyopaque, *VkDescriptorPool) callconv(.winapi) VkResult,
     DestroyDescriptorPool: *const fn (VkDevice, VkDescriptorPool, ?*const anyopaque) callconv(.winapi) void,
     AllocateDescriptorSets: *const fn (VkDevice, *const VkDescriptorSetAllocateInfo, *VkDescriptorSet) callconv(.winapi) VkResult,
+    FreeDescriptorSets: *const fn (VkDevice, VkDescriptorPool, u32, *const VkDescriptorSet) callconv(.winapi) VkResult,
     UpdateDescriptorSets: *const fn (VkDevice, u32, [*]const VkWriteDescriptorSet, u32, ?*const anyopaque) callconv(.winapi) void,
     CreatePipelineLayout: *const fn (VkDevice, *const VkPipelineLayoutCreateInfo, ?*const anyopaque, *VkPipelineLayout) callconv(.winapi) VkResult,
     DestroyPipelineLayout: *const fn (VkDevice, VkPipelineLayout, ?*const anyopaque) callconv(.winapi) void,
@@ -382,6 +384,7 @@ const VkFns = struct {
     CreateCommandPool: *const fn (VkDevice, *const VkCommandPoolCreateInfo, ?*const anyopaque, *VkCommandPool) callconv(.winapi) VkResult,
     DestroyCommandPool: *const fn (VkDevice, VkCommandPool, ?*const anyopaque) callconv(.winapi) void,
     AllocateCommandBuffers: *const fn (VkDevice, *const VkCommandBufferAllocateInfo, *VkCommandBuffer) callconv(.winapi) VkResult,
+    FreeCommandBuffers: *const fn (VkDevice, VkCommandPool, u32, *const VkCommandBuffer) callconv(.winapi) void,
     BeginCommandBuffer: *const fn (VkCommandBuffer, *const VkCommandBufferBeginInfo) callconv(.winapi) VkResult,
     EndCommandBuffer: *const fn (VkCommandBuffer) callconv(.winapi) VkResult,
     CmdBindPipeline: *const fn (VkCommandBuffer, u32, VkPipeline) callconv(.winapi) void,
@@ -407,6 +410,7 @@ pub const GpuBuffer = struct {
     buffer: VkBuffer = 0,
     memory: VkDeviceMemory = 0,
     byte_size: usize = 0,
+    alloc_size: usize = 0,
 };
 
 pub const KernelVersion = struct {
@@ -421,6 +425,7 @@ pub const InFlightDispatch = struct {
     kernel: *KernelVersion,
     fence: VkFence,
     cmd: VkCommandBuffer,
+    dset: VkDescriptorSet,
     completed: bool = false,
 };
 
@@ -567,6 +572,7 @@ pub const VulkanGpuDevice = struct {
             .CreateDescriptorPool = try loadDevFn(@TypeOf(@as(VkFns, undefined).CreateDescriptorPool), gdpa, device, "vkCreateDescriptorPool"),
             .DestroyDescriptorPool = try loadDevFn(@TypeOf(@as(VkFns, undefined).DestroyDescriptorPool), gdpa, device, "vkDestroyDescriptorPool"),
             .AllocateDescriptorSets = try loadDevFn(@TypeOf(@as(VkFns, undefined).AllocateDescriptorSets), gdpa, device, "vkAllocateDescriptorSets"),
+            .FreeDescriptorSets = try loadDevFn(@TypeOf(@as(VkFns, undefined).FreeDescriptorSets), gdpa, device, "vkFreeDescriptorSets"),
             .UpdateDescriptorSets = try loadDevFn(@TypeOf(@as(VkFns, undefined).UpdateDescriptorSets), gdpa, device, "vkUpdateDescriptorSets"),
             .CreatePipelineLayout = try loadDevFn(@TypeOf(@as(VkFns, undefined).CreatePipelineLayout), gdpa, device, "vkCreatePipelineLayout"),
             .DestroyPipelineLayout = try loadDevFn(@TypeOf(@as(VkFns, undefined).DestroyPipelineLayout), gdpa, device, "vkDestroyPipelineLayout"),
@@ -580,6 +586,7 @@ pub const VulkanGpuDevice = struct {
             .CreateCommandPool = try loadDevFn(@TypeOf(@as(VkFns, undefined).CreateCommandPool), gdpa, device, "vkCreateCommandPool"),
             .DestroyCommandPool = try loadDevFn(@TypeOf(@as(VkFns, undefined).DestroyCommandPool), gdpa, device, "vkDestroyCommandPool"),
             .AllocateCommandBuffers = try loadDevFn(@TypeOf(@as(VkFns, undefined).AllocateCommandBuffers), gdpa, device, "vkAllocateCommandBuffers"),
+            .FreeCommandBuffers = try loadDevFn(@TypeOf(@as(VkFns, undefined).FreeCommandBuffers), gdpa, device, "vkFreeCommandBuffers"),
             .BeginCommandBuffer = try loadDevFn(@TypeOf(@as(VkFns, undefined).BeginCommandBuffer), gdpa, device, "vkBeginCommandBuffer"),
             .EndCommandBuffer = try loadDevFn(@TypeOf(@as(VkFns, undefined).EndCommandBuffer), gdpa, device, "vkEndCommandBuffer"),
             .CmdBindPipeline = try loadDevFn(@TypeOf(@as(VkFns, undefined).CmdBindPipeline), gdpa, device, "vkCmdBindPipeline"),
@@ -605,6 +612,14 @@ pub const VulkanGpuDevice = struct {
             .supports_f64 = feats.features[36] != 0, // shaderFloat64 index in VkPhysicalDeviceFeatures
             .memory_budget_bytes = memory_budget_bytes,
         };
+        errdefer {
+            if (self.cmd_pool != 0) vk.DestroyCommandPool(device, self.cmd_pool, null);
+            if (self.pipe_cache != 0) vk.DestroyPipelineCache(device, self.pipe_cache, null);
+            if (self.pipe_layout != 0) vk.DestroyPipelineLayout(device, self.pipe_layout, null);
+            if (self.desc_pool != 0) vk.DestroyDescriptorPool(device, self.desc_pool, null);
+            if (self.desc_layout != 0) vk.DestroyDescriptorSetLayout(device, self.desc_layout, null);
+            vk.DestroyDevice(device, null);
+        }
         vk.GetDeviceQueue(device, compute_qf, 0, &self.queue);
 
         // Create descriptor set layout (3 storage buffers: a, b, out)
@@ -617,7 +632,12 @@ pub const VulkanGpuDevice = struct {
         if (vk.CreateDescriptorSetLayout(device, &dsl_ci, null, &self.desc_layout) != VK_SUCCESS) return error.VulkanCallFailed;
 
         const pool_size = [_]VkDescriptorPoolSize{.{ .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 16 }};
-        const dp_ci = VkDescriptorPoolCreateInfo{ .maxSets = 4, .poolSizeCount = 1, .pPoolSizes = &pool_size };
+        const dp_ci = VkDescriptorPoolCreateInfo{
+            .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+            .maxSets = 4,
+            .poolSizeCount = 1,
+            .pPoolSizes = &pool_size,
+        };
         if (vk.CreateDescriptorPool(device, &dp_ci, null, &self.desc_pool) != VK_SUCCESS) return error.VulkanCallFailed;
 
         const pl_ci = VkPipelineLayoutCreateInfo{ .pSetLayouts = &self.desc_layout };
@@ -744,14 +764,19 @@ pub const VulkanGpuDevice = struct {
         errdefer self.vk.FreeMemory(self.device, mem, null);
 
         if (self.vk.BindBufferMemory(self.device, buf, mem, 0) != VK_SUCCESS) return error.VulkanCallFailed;
-        self.memory_used_bytes += @intCast(req.size);
-        return .{ .buffer = buf, .memory = mem, .byte_size = byte_size };
+        const alloc_sz: usize = @intCast(req.size);
+        self.memory_used_bytes += alloc_sz;
+        return .{ .buffer = buf, .memory = mem, .byte_size = byte_size, .alloc_size = alloc_sz };
     }
 
     pub fn destroyBuffer(self: *VulkanGpuDevice, b: *GpuBuffer) void {
         if (b.buffer != 0) self.vk.DestroyBuffer(self.device, b.buffer, null);
         if (b.memory != 0) self.vk.FreeMemory(self.device, b.memory, null);
-        if (self.memory_used_bytes >= b.byte_size) self.memory_used_bytes -= b.byte_size;
+        if (self.memory_used_bytes >= b.alloc_size) {
+            self.memory_used_bytes -= b.alloc_size;
+        } else {
+            self.memory_used_bytes = 0;
+        }
         b.* = .{};
     }
 
@@ -831,6 +856,7 @@ pub const VulkanGpuDevice = struct {
         var dset: VkDescriptorSet = 0;
         const ds_ai = VkDescriptorSetAllocateInfo{ .descriptorPool = self.desc_pool, .pSetLayouts = &self.desc_layout };
         if (self.vk.AllocateDescriptorSets(self.device, &ds_ai, &dset) != VK_SUCCESS) return error.VulkanCallFailed;
+        errdefer _ = self.vk.FreeDescriptorSets(self.device, self.desc_pool, 1, &dset);
 
         const bi_a = VkDescriptorBufferInfo{ .buffer = buf_a.buffer, .range = buf_a.byte_size };
         const bi_b = VkDescriptorBufferInfo{ .buffer = buf_b.buffer, .range = buf_b.byte_size };
@@ -845,6 +871,7 @@ pub const VulkanGpuDevice = struct {
         var cmd: VkCommandBuffer = null;
         const cb_ai = VkCommandBufferAllocateInfo{ .commandPool = self.cmd_pool };
         if (self.vk.AllocateCommandBuffers(self.device, &cb_ai, &cmd) != VK_SUCCESS or cmd == null) return error.VulkanCallFailed;
+        errdefer self.vk.FreeCommandBuffers(self.device, self.cmd_pool, 1, &cmd);
 
         const begin_info = VkCommandBufferBeginInfo{};
         if (self.vk.BeginCommandBuffer(cmd, &begin_info) != VK_SUCCESS) return error.VulkanCallFailed;
@@ -869,13 +896,15 @@ pub const VulkanGpuDevice = struct {
             return error.VulkanCallFailed;
         }
         kv.in_flight_fences += 1;
-        return .{ .kernel = kv, .fence = fence, .cmd = cmd };
+        return .{ .kernel = kv, .fence = fence, .cmd = cmd, .dset = dset };
     }
 
     pub fn waitAndComplete(self: *VulkanGpuDevice, disp: *InFlightDispatch) GpuError!void {
         if (disp.completed) return;
         const wr = self.vk.WaitForFences(self.device, 1, &disp.fence, 1, 10_000_000_000);
         self.vk.DestroyFence(self.device, disp.fence, null);
+        self.vk.FreeCommandBuffers(self.device, self.cmd_pool, 1, &disp.cmd);
+        _ = self.vk.FreeDescriptorSets(self.device, self.desc_pool, 1, &disp.dset);
         disp.completed = true;
         if (disp.kernel.in_flight_fences > 0) disp.kernel.in_flight_fences -= 1;
         if (wr == VK_ERROR_DEVICE_LOST) {

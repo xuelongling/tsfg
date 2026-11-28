@@ -190,6 +190,16 @@ test('R12 & W6 Windows Functional Complete: Precompiled .tpkg Detached Consumpti
     'utf8',
   );
 
+  // Negative test: path traversal outside project root MUST be rejected!
+  const evilDir = path.join(root, 'evil_proj');
+  await mkdir(evilDir, { recursive: true });
+  await writeFile(
+    path.join(evilDir, 'tsfg.project.json'),
+    JSON.stringify({ name: 'evil', version: '1.0.0', entries: ['../game_app/main.ts'] }),
+    'utf8',
+  );
+  await assert.rejects(() => buildTsfgProject(evilDir, { clean: true }), /r12-path-escape/);
+
   const appCache = path.join(root, 'app-cache');
   const buildClean = await buildTsfgProject(appDir, { outDir: path.join(root, 'out-clean'), cacheDir: appCache, clean: true });
   const buildIncr = await buildTsfgProject(appDir, { outDir: path.join(root, 'out-incr'), cacheDir: appCache, clean: false });

@@ -11,37 +11,52 @@ import path from 'node:path';
 import { canonical, contractSetId, sha256, WINDOWS_X64_TARGET } from '../../compiler/r04-identity.mjs';
 import { buildTsfgProject, loadLocalPackage, sealLocalPackage } from '../r12-project-and-pkg.mjs';
 
-const FORBIDDEN_RUNTIME_IMPORTS = [
-  { name: 'llvm', re: /\bllvm[-_/]|@cImport\([^)]*llvm/i },
-  { name: 'mlir', re: /\bmlir[-_/]|@cImport\([^)]*mlir/i },
-  { name: 'clang', re: /\bclang-cl\b|\blibclang\b/i },
-  { name: 'typescript', re: /\btypescript\b|tsserver|tsc\.js/i },
-  { name: 'js_vm', re: /\bquickjs\b|\bv8\.h\b|\bhermes\b|\bnode:child_process\b/i },
+const FORBIDDEN_DEPENDENCY_TOKENS = [
+  { name: 'llvm', re: /llvm/i },
+  { name: 'mlir', re: /mlir/i },
+  { name: 'clang', re: /clang/i },
+  { name: 'typescript', re: /typescript|tsserver|tsc\.js/i },
+  { name: 'js_vm', re: /quickjs|\bv8\b|hermes|node/i },
 ];
 
+async function listProductionZigFiles(dir, prefix = '') {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const out = [];
+  for (const e of entries) {
+    const rel = prefix ? `${prefix}/${e.name}` : e.name;
+    if (e.isDirectory()) {
+      if (e.name === 'testdata' || e.name === 'test-data') continue;
+      out.push(...(await listProductionZigFiles(path.join(dir, e.name), rel)));
+    } else if (e.isFile() && e.name.endsWith('.zig') && !e.name.endsWith('-test.zig') && !e.name.startsWith('test-')) {
+      out.push(rel);
+    }
+  }
+  return out.sort();
+}
+
 /**
- * Audit all production Zig runtime source files (`runtime/r04..r11*.zig`) to guarantee
- * zero compiler/LLVM/MLIR/TypeScript/JS-VM dependencies in the shipping runtime!
+ * Audit ALL production (non-test) Zig runtime source files across `runtime/` (recursively)
+ * by inspecting every `@import("...")`, `@cInclude("...")`, and `extern "..."` linkage directive
+ * to guarantee zero compiler/LLVM/MLIR/Clang/TypeScript/JS-VM dependencies in the shipping runtime!
  */
 export async function auditRuntimeDependencyClosure(repoRoot) {
   const runtimeDir = path.join(repoRoot, 'runtime');
-  const entries = await readdir(runtimeDir, { withFileTypes: true });
-  const targetFiles = entries
-    .filter((e) => e.isFile() && /^r0[4-9]|^r1[0-3]/.test(e.name) && e.name.endsWith('.zig'))
-    .map((e) => e.name)
-    .sort();
+  const targetFiles = await listProductionZigFiles(runtimeDir);
 
   const violations = [];
+  const DEP_RE = /(?:@import|@cInclude)\(\s*"([^"]+)"\s*\)|\bextern\s+"([^"]+)"/g;
   for (const file of targetFiles) {
     const content = await readFile(path.join(runtimeDir, file), 'utf8');
-    // Strip doc/line comments before checking executable imports/references
     const codeOnly = content
       .split(/\r?\n/)
       .filter((line) => !line.trimStart().startsWith('//'))
       .join('\n');
-    for (const rule of FORBIDDEN_RUNTIME_IMPORTS) {
-      if (rule.re.test(codeOnly)) {
-        violations.push({ file: `runtime/${file}`, forbidden: rule.name });
+    for (const m of codeOnly.matchAll(DEP_RE)) {
+      const dep = m[1] ?? m[2] ?? '';
+      for (const rule of FORBIDDEN_DEPENDENCY_TOKENS) {
+        if (rule.re.test(dep)) {
+          violations.push({ file: `runtime/${file}`, dependency: dep, forbidden: rule.name });
+        }
       }
     }
   }

@@ -487,9 +487,7 @@ pub const HotReloadRuntime = struct {
             self.total_rejections += 1;
             return error.StaleCodeVersion;
         }
-        if (!std.mem.eql(u8, &old_desc.static_schema_hash, contract.static_schema_hash) or
-            !std.mem.eql(u8, &self.static_state.schema_hash, contract.static_schema_hash))
-        {
+        if (!std.mem.eql(u8, &self.static_state.schema_hash, contract.static_schema_hash)) {
             self.total_rejections += 1;
             return error.DataMigrationForbidden;
         }
@@ -651,6 +649,35 @@ pub const HotReloadRuntime = struct {
             return error.PatchVerificationFailed;
         };
         const patch = parsed.value;
+
+        // 1b. Enforce `.tpatch` payload contract binding (staticSchemaHash + target symbol hashes!)
+        if (!std.mem.eql(u8, patch.staticSchemaHash, contract.static_schema_hash)) {
+            self.recordReject();
+            return error.DataMigrationForbidden;
+        }
+        var found_fn_meta = false;
+        for (patch.functions) |f| {
+            if (std.mem.eql(u8, f.entrySymbol, symbol_name)) {
+                found_fn_meta = true;
+                if (!std.mem.eql(u8, f.signatureHash, contract.signature_hash)) {
+                    self.recordReject();
+                    return error.SignatureMismatch;
+                }
+                if (!std.mem.eql(u8, f.effectHash, contract.effect_hash)) {
+                    self.recordReject();
+                    return error.EffectContractMismatch;
+                }
+                if (!std.mem.eql(u8, f.captureLayoutHash, contract.capture_layout_hash)) {
+                    self.recordReject();
+                    return error.CaptureLayoutMismatch;
+                }
+                break;
+            }
+        }
+        if (!found_fn_meta) {
+            self.recordReject();
+            return error.SymbolNotFound;
+        }
 
         // 2. Verify DLL file bytes match `.tpatch` artifact SHA-256
         const dll_bytes = std.Io.Dir.cwd().readFileAlloc(io, dll_path, self.allocator, .limited(16 * 1024 * 1024)) catch {
@@ -845,17 +872,12 @@ pub const HotReloadRuntime = struct {
         const tx = self.active_tx orelse return error.NoActiveReloadTx;
         if (!tx.validated or tx.staged_values == null) return error.ReloadTxNotStaged;
 
-        // Swap static state block atomically & update active cells' static_schema_hash
+        // Swap static state block atomically; live SlotDescriptors remain 100% immutable!
+        // Subsequent upgrades validate against `self.static_state.schema_hash` under `publish_lock`.
         self.allocator.free(self.static_state.values);
         self.static_state.values = tx.staged_values.?;
         self.static_state.schema_hash = tx.new_schema_hash;
         self.static_state.epoch = tx.to_epoch;
-
-        var it = self.cells.valueIterator();
-        while (it.next()) |cell_ptr| {
-            const old_desc = cell_ptr.*.current.load(.acquire);
-            old_desc.static_schema_hash = tx.new_schema_hash;
-        }
         self.active_tx = null;
     }
 
