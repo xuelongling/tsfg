@@ -526,3 +526,106 @@ int main(void) {
   assert.deepEqual(await compileAndRunCommonAot('live-ts-unopt', canonMlir, buildDriver), expected);
   assert.deepEqual(await compileAndRunCommonAot('live-ts-opt', optMlir, buildDriver), expected);
 });
+
+test('E2E Live Raw TypeScript -> Go Frontend -> Core IR -> 4-way VM === Windows x86-64 AOT (unions, undefined/null equality, narrow_mismatch trap, negative static Q11 borrow & null numeric rejection)', async () => {
+  const unionTs = `
+export function classifyNullish(x: i32 | undefined | null): i32 {
+  if (x === undefined) { return -1; }
+  if (x === null) { return -2; }
+  return 1;
+}
+
+export function fallbackAdd(a: i32 | undefined, b: i32): i32 {
+  if (a === undefined) { return 50 + b; }
+  return (a as i32) + b;
+}
+
+export function addMaybe(a: i32 | undefined): i32 {
+  return (a as i32) + 100;
+}
+`;
+  const { canonMlir, optMlir } = compileLiveRawTypeScriptToCoreMlir(unionTs, ['addMaybe', 'classifyNullish', 'fallbackAdd']);
+
+  const runVm = (mlir) => {
+    const vm = new CommonCoreVm(mlir);
+    const cUndef = vm.callExport('classifyNullish', [undefined]);
+    const cNull = vm.callExport('classifyNullish', [null]);
+    const cVal = vm.callExport('classifyNullish', [23]);
+    const fUndef = vm.callExport('fallbackAdd', [undefined, 7]);
+    const fVal = vm.callExport('fallbackAdd', [12, 7]);
+    const mVal = vm.callExport('addMaybe', [23]);
+    const mTrap = vm.callExport('addMaybe', [undefined]);
+    return {
+      cUndef: cUndef.i32,
+      cNull: cNull.i32,
+      cVal: cVal.i32,
+      fUndef: fUndef.i32,
+      fVal: fVal.i32,
+      mVal: mVal.i32,
+      mTrap: mTrap.trap,
+    };
+  };
+
+  const buildDriver = ({ exports }) => `${C_COMMON_EXTERNS}
+extern void ${exports.classifyNullish.sym}(void *, uint16_t *, uint64_t *, uint16_t, uint64_t);
+extern void ${exports.fallbackAdd.sym}(void *, uint16_t *, uint64_t *, uint16_t, uint64_t, uint16_t, uint64_t);
+extern void ${exports.addMaybe.sym}(void *, uint16_t *, uint64_t *, uint16_t, uint64_t);
+int main(void) {
+  void *e = tsfg_eng_create();
+  aot_cmn_bootstrap(e);
+  uint16_t t; uint64_t cu, cn, cv, fu, fv, mv, dummy;
+  ${exports.classifyNullish.sym}(e, &t, &cu, 0, 0);
+  ${exports.classifyNullish.sym}(e, &t, &cn, 1, 0);
+  ${exports.classifyNullish.sym}(e, &t, &cv, 3, 23);
+  ${exports.fallbackAdd.sym}(e, &t, &fu, 0, 0, 3, 7);
+  ${exports.fallbackAdd.sym}(e, &t, &fv, 3, 12, 3, 7);
+  ${exports.addMaybe.sym}(e, &t, &mv, 3, 23);
+  ${exports.addMaybe.sym}(e, &t, &dummy, 0, 0);
+  uint32_t mTrap = tsfg_eng_trap(e);
+  printf("{\\"cUndef\\":%d,\\"cNull\\":%d,\\"cVal\\":%d,\\"fUndef\\":%d,\\"fVal\\":%d,\\"mVal\\":%d,\\"mTrap\\":%u}\\n",
+         (int32_t)cu, (int32_t)cn, (int32_t)cv, (int32_t)fu, (int32_t)fv, (int32_t)mv, mTrap);
+  tsfg_eng_destroy(e);
+  return 0;
+}`;
+
+  const expected = {
+    cUndef: -1,
+    cNull: -2,
+    cVal: 1,
+    fUndef: 57,
+    fVal: 19,
+    mVal: 123,
+    mTrap: TRAP.narrow_mismatch,
+  };
+  assert.deepEqual(runVm(canonMlir), expected);
+  assert.deepEqual(runVm(optMlir), expected);
+  assert.deepEqual(await compileAndRunCommonAot('live-union-unopt', canonMlir, buildDriver), expected);
+  assert.deepEqual(await compileAndRunCommonAot('live-union-opt', optMlir, buildDriver), expected);
+
+  // Negative static Q11 borrow rejection: modifying array length while a live ReadSpan exists MUST be rejected!
+  const badBorrowTs = `
+export function illegalBorrow(): i32 {
+  const a: i32[] = [1, 2, 3];
+  const s: ReadSpan<i32> = readSpan(a, 0, 2);
+  a.length = 1;
+  return s[0];
+}
+`;
+  assert.throws(
+    () => compileLiveRawTypeScriptToCoreMlir(badBorrowTs, ['illegalBorrow']),
+    (err) => err instanceof Error && /borrow|ReadSpan|length|r03-common-program/i.test(err.message),
+    'mutating array length during live ReadSpan must be statically rejected',
+  );
+
+  // Negative static capability rejection: direct numeric consumption of i32 | null MUST be rejected statically.
+  const badNullNumTs = `
+export function illegalNullNum(x: i32 | null): i32 {
+  return (x as i32) + 1;
+}
+`;
+  assert.throws(
+    () => compileLiveRawTypeScriptToCoreMlir(badNullNumTs, ['illegalNullNum']),
+    (err) => err instanceof Error && /r03-common-program-capability/i.test(err.message),
+    'direct numeric consumption of i32 | null must be statically rejected',
+  );
+});
