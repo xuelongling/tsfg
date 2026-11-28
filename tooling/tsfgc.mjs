@@ -13,7 +13,8 @@ import { checkGenericPackageIoFileSize } from '../compiler/generic-package-io.mj
 import { referenceHirFormat } from '../compiler/reference-hir.mjs';
 import { familyOf } from '../compiler/module-callable-common.mjs';
 import { checkSystemQueryFileSize, systemQueryRequestContext } from '../compiler/system-query-facts.mjs';
-import {canonical} from '../compiler/identity.mjs';
+import { canonical } from '../compiler/identity.mjs';
+import { compileTsSourceToR05Bytecode, runTsOnR05ZigVm } from '../compiler/r05-ts-driver.mjs';
 
 /** @param {string} file @param {(size: bigint) => number} checkSize @param {'Query'|'HIR'|'Common'|'Generic package RPC'} kind */
 async function readStableInputFile(file,checkSize,kind){
@@ -46,14 +47,51 @@ async function readStableInputFile(file,checkSize,kind){
 const readCommonInputFile = file => readStableInputFile(file,checkCommonJsonFileSize,'Common');
 
 try {
-  const optionNames = ["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request", "--gpu-request", "--package-response"];
+  const optionNames = ["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request", "--gpu-request", "--package-response", "--ts", "--entry", "--args", "--fuel", "--unfused"];
   const options = new Map();
   const args = process.argv.slice(2);
-  for (let i = 0; i < args.length; i += 2) {
-    const option = args[i], value = args[i + 1];
+  for (let i = 0; i < args.length; i++) {
+    const option = args[i];
     if (!optionNames.includes(option) || options.has(option)) throw new TypeError("r03-cli-options: invalid or duplicate option");
+    if (option === "--unfused") {
+      options.set(option, "true");
+      continue;
+    }
+    const value = args[++i];
     if (!value || optionNames.includes(value)) throw new TypeError(`r03-cli-options: ${option} requires a value`);
     options.set(option, value);
+  }
+  if (options.has("--ts")) {
+    const tsPath = options.get("--ts");
+    const emit = options.get("--emit") ?? "r05-run";
+    const entry = options.get("--entry") ?? "main";
+    if (emit !== "r05-run" && emit !== "r05-bytecode") {
+      throw new TypeError("r05-cli-options: --ts requires --emit r05-run|r05-bytecode");
+    }
+    if (emit === "r05-bytecode") {
+      const sourceText = await readFile(tsPath, "utf8");
+      const compiled = compileTsSourceToR05Bytecode(sourceText, {
+        filePath: tsPath,
+        entry,
+        frontend: options.get("--frontend"),
+        core: options.get("--core"),
+      });
+      process.stdout.write(compiled.bytes);
+    } else {
+      const argList = options.has("--args") ? options.get("--args").split(",").filter(Boolean) : [];
+      const { result } = await runTsOnR05ZigVm(tsPath, {
+        isFile: true,
+        entry,
+        args: argList,
+        unfused: options.has("--unfused"),
+        fuel: options.has("--fuel") ? Number(options.get("--fuel")) : undefined,
+        frontend: options.get("--frontend"),
+        core: options.get("--core"),
+        vm: options.get("--vm"),
+      });
+      process.stdout.write(JSON.stringify(result) + "\n");
+    }
+    process.exit(0);
   }
   const emit = options.get("--emit") ?? "run";
   const inputKind = options.get("--input-kind") ?? "source";

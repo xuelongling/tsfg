@@ -14,6 +14,7 @@ const std = @import("std");
 
 pub const MAGIC = "TSFGR05B";
 pub const VERSION: u32 = 1;
+pub const VERSION_V2: u32 = 2;
 pub const MAX_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_FUNCTIONS: u16 = 512;
 pub const MAX_REGS: u16 = 512;
@@ -55,6 +56,7 @@ pub const ValTag = enum(u8) {
     closure = 6,
     array = 7,
     span = 8,
+    string = 9,
 };
 
 pub const Op = enum(u8) {
@@ -136,6 +138,39 @@ pub const Op = enum(u8) {
     // Trigger explicit GC safepoint (for stress testing / safepoint testing)
     gc_safepoint = 56,
 
+    // Full TS Static Core Opcodes (v1/v2 wire compatible)
+    bit_not = 57, // dst, a (~i32)
+    neg_f64 = 58, // dst, a (-f64)
+    le_f64 = 59, // dst, a, b
+    gt_f64 = 60, // dst, a, b
+    ge_f64 = 61, // dst, a, b
+    assert_non_null = 62, // dst, a (traps r01-t-narrow on undef/null)
+    array_resize = 63, // a=arr, b=new_len, dst=fill_reg (0xFFFF = no fill)
+    get_type_id = 64, // dst = i32(obj.type_id)
+    mark_uninit = 65, // a=obj (sets TDZ bit)
+    mark_init = 66, // a=obj (clears TDZ bit)
+    check_init = 67, // a=obj (traps r01-t-tdz if uninit or null)
+    new_obj_dyn = 68, // dst, a=field_count, imm32=type_id_reg
+    unreachable_trap = 69, // traps r01-t-invalid-handle
+
+    // Lossless UTF-16 Code-Unit String Operations
+    const_str = 70, // dst, imm32=str_pool_idx
+    str_len = 71, // dst, a=str_reg
+    str_concat = 72, // dst, a=lhs, b=rhs
+    str_slice = 73, // dst, a=str, b=start_reg, imm32=end_reg
+    str_char_code_at = 74, // dst, a=str, b=idx_reg
+
+    // Tag-dispatched i32/f64/string arithmetic & comparisons for union/Common20 binary ops
+    add_dyn = 75,
+    sub_dyn = 76,
+    mul_dyn = 77,
+    div_dyn = 78,
+    lt_dyn = 79,
+    le_dyn = 80,
+    gt_dyn = 81,
+    ge_dyn = 82,
+    neg_dyn = 83,
+
     // --- Internal-only predecoded superinstructions (NEVER serialized on disk!) ---
     super_add_i32_imm = 200, // fused: const_i32 + add_i32 (dst = a + imm32)
     super_br_if_lt_i32 = 201, // fused: lt_i32 + cond_br (if reg[a] < reg[b] jump imm32)
@@ -196,6 +231,7 @@ pub const VerifiedModule = struct {
     global_count: u16,
     required_capabilities: []u32,
     const_pool_f64: []u64,
+    const_pool_str: [][]u16,
     functions: []VerifiedFunction,
     raw_bytes: []u8,
 
@@ -209,6 +245,8 @@ pub const VerifiedModule = struct {
         self.allocator.free(self.functions);
         self.allocator.free(self.required_capabilities);
         self.allocator.free(self.const_pool_f64);
+        for (self.const_pool_str) |s| self.allocator.free(s);
+        self.allocator.free(self.const_pool_str);
         self.allocator.free(self.raw_bytes);
         self.* = undefined;
     }
@@ -251,6 +289,7 @@ pub const RawModuleSpec = struct {
     global_count: u16 = 0,
     required_capabilities: []const u32 = &.{},
     const_pool_f64: []const u64 = &.{},
+    const_pool_str: []const []const u16 = &.{},
     functions: []const RawFnSpec,
 };
 
@@ -265,6 +304,7 @@ pub fn encodeModule(allocator: std.mem.Allocator, spec: RawModuleSpec) ![]u8 {
     var payload: std.ArrayListUnmanaged(u8) = .empty;
     defer payload.deinit(allocator);
 
+    const wire_ver: u32 = if (spec.const_pool_str.len > 0) VERSION_V2 else VERSION;
     try payload.appendSlice(allocator, &spec.module_id);
     try payload.appendSlice(allocator, &spec.abi_hash);
     try payload.appendSlice(allocator, &spec.static_schema_hash);
@@ -274,6 +314,13 @@ pub fn encodeModule(allocator: std.mem.Allocator, spec: RawModuleSpec) ![]u8 {
     for (spec.required_capabilities) |c| try appendInt(allocator, &payload, u32, c);
     try appendInt(allocator, &payload, u16, @intCast(spec.const_pool_f64.len));
     for (spec.const_pool_f64) |bits| try appendInt(allocator, &payload, u64, bits);
+    if (wire_ver == VERSION_V2) {
+        try appendInt(allocator, &payload, u16, @intCast(spec.const_pool_str.len));
+        for (spec.const_pool_str) |s| {
+            try appendInt(allocator, &payload, u32, @intCast(s.len));
+            for (s) |cu| try appendInt(allocator, &payload, u16, cu);
+        }
+    }
     try appendInt(allocator, &payload, u16, @intCast(spec.functions.len));
 
     for (spec.functions) |f| {
@@ -308,7 +355,7 @@ pub fn encodeModule(allocator: std.mem.Allocator, spec: RawModuleSpec) ![]u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(allocator);
     try out.appendSlice(allocator, MAGIC); // 8
-    try appendInt(allocator, &out, u32, VERSION); // 4
+    try appendInt(allocator, &out, u32, wire_ver); // 4
     try appendInt(allocator, &out, u32, total_len); // 4
     try out.appendSlice(allocator, &digest); // 32 (header = 48 bytes)
     try out.appendSlice(allocator, payload.items);
@@ -341,8 +388,8 @@ const Cursor = struct {
 };
 
 fn isDiskOpcode(raw: u8) bool {
-    return raw <= 56 and switch (raw) {
-        0...7, 10...56 => true,
+    return raw <= 83 and switch (raw) {
+        0...7, 10...83 => true,
         else => false,
     };
 }
@@ -356,7 +403,7 @@ pub fn verifyAndPredecode(allocator: std.mem.Allocator, bytes: []const u8, expec
     const magic = try cur.take(8);
     if (!std.mem.eql(u8, magic, MAGIC)) return error.BadMagic;
     const ver = try cur.readInt(u32);
-    if (ver != VERSION) return error.VersionMismatch;
+    if (ver != VERSION and ver != VERSION_V2) return error.VersionMismatch;
     const total_len = try cur.readInt(u32);
     if (total_len != bytes.len) return error.SizeLimit;
     const expected_digest = try cur.readBytes32();
@@ -384,6 +431,24 @@ pub fn verifyAndPredecode(allocator: std.mem.Allocator, bytes: []const u8, expec
     const f64_pool = allocator.alloc(u64, f64_count) catch return error.OutOfMemory;
     errdefer allocator.free(f64_pool);
     for (f64_pool) |*bits| bits.* = try cur.readInt(u64);
+
+    const str_count: usize = if (ver == VERSION_V2) try cur.readInt(u16) else 0;
+    if (str_count > 4096) return error.SizeLimit;
+    const str_pool = allocator.alloc([]u16, str_count) catch return error.OutOfMemory;
+    var parsed_strs: usize = 0;
+    errdefer {
+        for (str_pool[0..parsed_strs]) |s| allocator.free(s);
+        allocator.free(str_pool);
+    }
+    for (0..str_count) |si| {
+        const slen = try cur.readInt(u32);
+        if (slen > 65536) return error.SizeLimit;
+        const buf = allocator.alloc(u16, slen) catch return error.OutOfMemory;
+        errdefer allocator.free(buf);
+        for (buf) |*cu| cu.* = try cur.readInt(u16);
+        str_pool[si] = buf;
+        parsed_strs += 1;
+    }
 
     const fn_count = try cur.readInt(u16);
     if (fn_count == 0 or fn_count > MAX_FUNCTIONS) return error.InvalidFunctionCount;
@@ -470,7 +535,7 @@ pub fn verifyAndPredecode(allocator: std.mem.Allocator, bytes: []const u8, expec
             return error.MissingEntryFuel;
         }
         const last_op: Op = @enumFromInt(unfused[op_count - 1].op);
-        if (last_op != .ret and last_op != .br and last_op != .throw_exc) {
+        if (last_op != .ret and last_op != .br and last_op != .throw_exc and last_op != .unreachable_trap) {
             return error.UnterminatedFunction;
         }
 
@@ -526,6 +591,22 @@ pub fn verifyAndPredecode(allocator: std.mem.Allocator, bytes: []const u8, expec
                     if (ins.dst >= reg_count) return error.InvalidRegister;
                     if (ins.imm32 < 0 or @as(usize, @intCast(ins.imm32)) >= f64_pool.len) return error.InvalidOpcode;
                 },
+                .const_str => {
+                    if (ins.dst >= reg_count) return error.InvalidRegister;
+                    if (ins.imm32 < 0 or @as(usize, @intCast(ins.imm32)) >= str_pool.len) return error.InvalidOpcode;
+                },
+                .str_slice => {
+                    if (ins.dst >= reg_count or ins.a >= reg_count or ins.b >= reg_count) return error.InvalidRegister;
+                    if (ins.imm32 < 0 or @as(u32, @intCast(ins.imm32)) >= reg_count) return error.InvalidRegister;
+                },
+                .array_resize => {
+                    if (ins.a >= reg_count or ins.b >= reg_count) return error.InvalidRegister;
+                    if (ins.dst != 0xFFFF and ins.dst >= reg_count) return error.InvalidRegister;
+                },
+                .new_obj_dyn => {
+                    if (ins.dst >= reg_count) return error.InvalidRegister;
+                    if (ins.imm32 < 0 or @as(u32, @intCast(ins.imm32)) >= reg_count) return error.InvalidRegister;
+                },
                 .global_get => {
                     if (ins.dst >= reg_count) return error.InvalidRegister;
                     if (ins.imm32 < 0 or @as(usize, @intCast(ins.imm32)) >= global_count) return error.InvalidRegister;
@@ -561,14 +642,14 @@ pub fn verifyAndPredecode(allocator: std.mem.Allocator, bytes: []const u8, expec
                     if (ins.dst >= reg_count or ins.a >= reg_count or ins.b >= reg_count) return error.InvalidRegister;
                     if (ins.imm32 < 0 or @as(u32, @intCast(ins.imm32)) >= reg_count) return error.InvalidRegister;
                 },
-                .nop, .fuel, .gc_safepoint => {},
+                .nop, .fuel, .gc_safepoint, .unreachable_trap => {},
                 .const_i32, .const_bool, .const_undef, .const_null, .catch_take => {
                     if (ins.dst >= reg_count) return error.InvalidRegister;
                 },
-                .mov, .neg_i32, .bool_not, .narrow_i32, .clone_obj, .array_len => {
+                .mov, .neg_i32, .bit_not, .neg_f64, .neg_dyn, .bool_not, .narrow_i32, .assert_non_null, .clone_obj, .array_len, .get_type_id, .str_len => {
                     if (ins.dst >= reg_count or ins.a >= reg_count) return error.InvalidRegister;
                 },
-                .throw_exc, .span_release => {
+                .throw_exc, .span_release, .mark_uninit, .mark_init, .check_init => {
                     if (ins.a >= reg_count) return error.InvalidRegister;
                 },
                 .new_obj => {
@@ -668,6 +749,7 @@ pub fn verifyAndPredecode(allocator: std.mem.Allocator, bytes: []const u8, expec
         .global_count = global_count,
         .required_capabilities = caps,
         .const_pool_f64 = f64_pool,
+        .const_pool_str = str_pool,
         .functions = functions,
         .raw_bytes = raw_copy,
     };

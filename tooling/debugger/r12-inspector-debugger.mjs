@@ -41,6 +41,15 @@ export function inspectTbcBytecode(bytes) {
   off += 2;
   const f64Count = payload.readUInt16LE(off);
   off += 2 + f64Count * 8;
+  let strCount = 0;
+  if (formatVersion === 2) {
+    strCount = payload.readUInt16LE(off);
+    off += 2;
+    for (let si = 0; si < strCount; si++) {
+      const slen = payload.readUInt32LE(off);
+      off += 4 + slen * 2;
+    }
+  }
   const fnCount = payload.readUInt16LE(off);
   off += 2;
 
@@ -54,7 +63,7 @@ export function inspectTbcBytecode(bytes) {
     off += 2;
     off += 8; // ref_reg_mask
     const handlerCount = payload.readUInt16LE(off);
-    off += 2 + handlerCount * 16;
+    off += 2 + handlerCount * 13;
     const opCount = payload.readUInt32LE(off);
     off += 4;
     const instructions = [];

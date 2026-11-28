@@ -39,6 +39,9 @@ pub const TypedVal = struct {
     pub fn fromObj(obj: *gc_mod.GcObject) TypedVal {
         return .{ .tag = .ref, .payload = obj.id, .obj_ptr = obj };
     }
+    pub fn fromString(str_id: u64) TypedVal {
+        return .{ .tag = .string, .payload = str_id };
+    }
     pub fn asI32(self: TypedVal) i32 {
         return @bitCast(@as(u32, @truncate(self.payload)));
     }
@@ -127,6 +130,7 @@ const VmState = struct {
     closures: std.ArrayListUnmanaged(ClosureRec) = .empty,
     arrays: std.ArrayListUnmanaged(ArrayRec) = .empty,
     spans: std.ArrayListUnmanaged(SpanRec) = .empty,
+    strings: std.ArrayListUnmanaged([]u16) = .empty,
     field_caches: [64]FieldInlineCache = [_]FieldInlineCache{.{}} ** 64,
     globals: []TypedVal,
     global_init: []bool,
@@ -159,9 +163,27 @@ const VmState = struct {
         for (self.arrays.items) |*a| a.items.deinit(self.rt.allocator);
         self.arrays.deinit(self.rt.allocator);
         self.spans.deinit(self.rt.allocator);
+        for (self.strings.items) |s| self.rt.allocator.free(s);
+        self.strings.deinit(self.rt.allocator);
         self.closures.deinit(self.rt.allocator);
         self.rt.allocator.free(self.globals);
         self.rt.allocator.free(self.global_init);
+    }
+
+    fn allocString(self: *VmState, units: []const u16) !TypedVal {
+        const copy = try self.rt.allocator.dupe(u16, units);
+        errdefer self.rt.allocator.free(copy);
+        try self.strings.append(self.rt.allocator, copy);
+        return TypedVal.fromString(self.strings.items.len);
+    }
+
+    fn getString(self: *const VmState, v: TypedVal) ?[]const u16 {
+        if (v.tag != .string or v.payload == 0 or v.payload > self.strings.items.len) return null;
+        return self.strings.items[@intCast(v.payload - 1)];
+    }
+
+    fn asNumF64(v: TypedVal) f64 {
+        return if (v.tag == .f64) v.asF64() else @floatFromInt(v.asI32());
     }
 
     fn setTrap(self: *VmState, code: []const u8, rule: []const u8, span: bc.SourceSpan) void {
@@ -421,6 +443,11 @@ const VmState = struct {
                         .@"undefined", .@"null" => true,
                         .f64 => l.asF64() == r.asF64(),
                         .ref => if (l.obj_ptr != null and r.obj_ptr != null) l.obj_ptr.?.id == r.obj_ptr.?.id else l.payload == r.payload,
+                        .string => blk: {
+                            const sl = self.getString(l) orelse break :blk false;
+                            const sr = self.getString(r) orelse break :blk false;
+                            break :blk std.mem.eql(u16, sl, sr);
+                        },
                         else => l.payload == r.payload,
                     };
                     regs[ins.dst] = TypedVal.fromBool(if (ins.imm32 != 0) !eq else eq);
@@ -490,7 +517,21 @@ const VmState = struct {
                 },
                 .new_obj => {
                     syncRootsFromRegs(regs, root_slots);
-                    const obj = self.rt.gc.alloc(@intCast(ins.imm32), .class_instance, ins.a, ins.b) catch {
+                    const field_count: usize = @max(@as(usize, ins.a) + @as(usize, ins.b), 1);
+                    const obj = self.rt.gc.alloc(@intCast(ins.imm32), .class_instance, 1 + 2 * field_count, field_count) catch {
+                        self.setAbort("r05-execution-abort-oom", span);
+                        return TypedVal.undef();
+                    };
+                    syncRegsFromRoots(regs, root_slots);
+                    regs[ins.dst] = TypedVal.fromObj(obj);
+                    self.maybeGcSafepoint(regs, root_slots, false, span);
+                    pc += 1;
+                },
+                .new_obj_dyn => {
+                    const tid: u64 = @intCast(@as(u32, @bitCast(regs[@intCast(ins.imm32)].asI32())));
+                    syncRootsFromRegs(regs, root_slots);
+                    const field_count: usize = @max(@as(usize, ins.a), 1);
+                    const obj = self.rt.gc.alloc(tid, .class_instance, 1 + 2 * field_count, field_count) catch {
                         self.setAbort("r05-execution-abort-oom", span);
                         return TypedVal.undef();
                     };
@@ -528,15 +569,18 @@ const VmState = struct {
                     };
                     const cslot: usize = @intCast(@as(u32, @bitCast(ins.imm32)) % 64);
                     _ = self.field_caches[cslot].lookup(self.mod.code_version, obj.type_id, ins.b);
-                    if (ins.b < obj.scalars.len) {
-                        regs[ins.dst] = TypedVal.fromI32(@bitCast(@as(u32, @truncate(obj.scalars[ins.b]))));
+                    const fidx: usize = ins.b;
+                    if (fidx >= obj.edges.len or 1 + 2 * fidx + 1 >= obj.scalars.len) {
+                        self.setTrap("r01-t-bounds", "r01-references", span);
+                        return TypedVal.undef();
+                    }
+                    const raw_tag: u8 = @truncate(obj.scalars[1 + 2 * fidx]);
+                    const tag: ValTag = @enumFromInt(raw_tag);
+                    const payload = obj.scalars[1 + 2 * fidx + 1];
+                    if (tag == .ref) {
+                        regs[ins.dst] = if (obj.edges[fidx]) |child| TypedVal.fromObj(child) else TypedVal.nullVal();
                     } else {
-                        const eidx = ins.b - obj.scalars.len;
-                        if (eidx >= obj.edges.len) {
-                            self.setTrap("r01-t-bounds", "r01-references", span);
-                            return TypedVal.undef();
-                        }
-                        regs[ins.dst] = if (obj.edges[eidx]) |child| TypedVal.fromObj(child) else TypedVal.nullVal();
+                        regs[ins.dst] = .{ .tag = tag, .payload = payload };
                     }
                     pc += 1;
                 },
@@ -547,20 +591,18 @@ const VmState = struct {
                     };
                     const cslot: usize = @intCast(@as(u32, @bitCast(ins.imm32)) % 64);
                     _ = self.field_caches[cslot].lookup(self.mod.code_version, obj.type_id, ins.b);
-                    const val = regs[ins.dst];
-                    if (ins.b < obj.scalars.len) {
-                        obj.scalars[ins.b] = val.payload;
-                    } else {
-                        const eidx = ins.b - obj.scalars.len;
-                        if (eidx >= obj.edges.len) {
-                            self.setTrap("r01-t-bounds", "r01-references", span);
-                            return TypedVal.undef();
-                        }
-                        self.rt.gc.writeEdge(obj, eidx, val.obj_ptr) catch {
-                            self.setAbort("r05-execution-abort-oom", span);
-                            return TypedVal.undef();
-                        };
+                    const fidx: usize = ins.b;
+                    if (fidx >= obj.edges.len or 1 + 2 * fidx + 1 >= obj.scalars.len) {
+                        self.setTrap("r01-t-bounds", "r01-references", span);
+                        return TypedVal.undef();
                     }
+                    const val = regs[ins.dst];
+                    obj.scalars[1 + 2 * fidx] = @intFromEnum(val.tag);
+                    obj.scalars[1 + 2 * fidx + 1] = val.payload;
+                    self.rt.gc.writeEdge(obj, fidx, if (val.tag == .ref) val.obj_ptr else null) catch {
+                        self.setAbort("r05-execution-abort-oom", span);
+                        return TypedVal.undef();
+                    };
                     pc += 1;
                 },
                 .make_closure => {
@@ -601,8 +643,13 @@ const VmState = struct {
                     const rec = self.closures.items[@intCast(cl_val.payload - 1)];
                     var call_args: [64]TypedVal = undefined;
                     var n: usize = 0;
-                    if (rec.env_obj) |env| {
-                        call_args[n] = TypedVal.fromObj(env);
+                    const expects_env = self.mod.functions[rec.fn_idx].param_count == ins.b + 1;
+                    if (expects_env) {
+                        if (rec.env_obj) |env| {
+                            call_args[n] = TypedVal.fromObj(env);
+                        } else {
+                            call_args[n] = TypedVal.nullVal();
+                        }
                         n += 1;
                     }
                     for (0..ins.b) |k| {
@@ -787,6 +834,266 @@ const VmState = struct {
                     self.maybeGcSafepoint(regs, root_slots, true, span);
                     pc += 1;
                 },
+                .bit_not => {
+                    regs[ins.dst] = TypedVal.fromI32(~regs[ins.a].asI32());
+                    pc += 1;
+                },
+                .neg_f64 => {
+                    regs[ins.dst] = TypedVal.fromF64Bits(canonF64(-regs[ins.a].asF64()));
+                    pc += 1;
+                },
+                .le_f64 => {
+                    regs[ins.dst] = TypedVal.fromBool(regs[ins.a].asF64() <= regs[ins.b].asF64());
+                    pc += 1;
+                },
+                .gt_f64 => {
+                    regs[ins.dst] = TypedVal.fromBool(regs[ins.a].asF64() > regs[ins.b].asF64());
+                    pc += 1;
+                },
+                .ge_f64 => {
+                    regs[ins.dst] = TypedVal.fromBool(regs[ins.a].asF64() >= regs[ins.b].asF64());
+                    pc += 1;
+                },
+                .assert_non_null => {
+                    const v = regs[ins.a];
+                    if (v.tag == .@"undefined" or v.tag == .@"null") {
+                        self.setTrap("r01-t-narrow", "r01-unions", span);
+                        return TypedVal.undef();
+                    }
+                    regs[ins.dst] = v;
+                    pc += 1;
+                },
+                .array_resize => {
+                    const recv = regs[ins.a];
+                    if (recv.tag != .array or recv.payload == 0 or recv.payload > self.arrays.items.len) {
+                        self.setTrap("r01-t-invalid-handle", "r01-vector", span);
+                        return TypedVal.undef();
+                    }
+                    const arr = &self.arrays.items[@intCast(recv.payload - 1)];
+                    if (arr.active_readers > 0) {
+                        self.setTrap("r01-t-borrow-conflict", "r01-span", span);
+                        return TypedVal.undef();
+                    }
+                    const new_len_i = regs[ins.b].asI32();
+                    if (new_len_i < 0) {
+                        self.setTrap("r01-t-bounds", "r01-vector", span);
+                        return TypedVal.undef();
+                    }
+                    const new_len: usize = @intCast(new_len_i);
+                    if (new_len > arr.items.items.len and ins.dst == 0xFFFF) {
+                        self.setTrap("r01-t-bounds", "r01-vector", span);
+                        return TypedVal.undef();
+                    }
+                    const fill = if (ins.dst == 0xFFFF) TypedVal.undef() else regs[ins.dst];
+                    while (arr.items.items.len < new_len) {
+                        arr.items.append(self.rt.allocator, fill) catch {
+                            self.setAbort("r05-execution-abort-oom", span);
+                            return TypedVal.undef();
+                        };
+                    }
+                    if (arr.items.items.len > new_len) arr.items.shrinkRetainingCapacity(new_len);
+                    pc += 1;
+                },
+                .get_type_id => {
+                    const obj = regs[ins.a].obj_ptr orelse {
+                        self.setTrap("r01-t-invalid-handle", "r01-references", span);
+                        return TypedVal.undef();
+                    };
+                    regs[ins.dst] = TypedVal.fromI32(@intCast(@as(u32, @truncate(obj.type_id))));
+                    pc += 1;
+                },
+                .mark_uninit => {
+                    if (regs[ins.a].obj_ptr) |obj| {
+                        obj.scalars[0] |= 1;
+                    }
+                    pc += 1;
+                },
+                .mark_init => {
+                    if (regs[ins.a].obj_ptr) |obj| {
+                        obj.scalars[0] &= ~@as(u64, 1);
+                    }
+                    pc += 1;
+                },
+                .check_init => {
+                    const obj = regs[ins.a].obj_ptr orelse {
+                        self.setTrap("r01-t-tdz", "r01-references", span);
+                        return TypedVal.undef();
+                    };
+                    if ((obj.scalars[0] & 1) != 0) {
+                        self.setTrap("r01-t-tdz", "r01-references", span);
+                        return TypedVal.undef();
+                    }
+                    pc += 1;
+                },
+                .unreachable_trap => {
+                    self.setTrap("r01-t-invalid-handle", "r01-control", span);
+                    return TypedVal.undef();
+                },
+                .const_str => {
+                    const units = self.mod.const_pool_str[@intCast(ins.imm32)];
+                    regs[ins.dst] = self.allocString(units) catch {
+                        self.setAbort("r05-execution-abort-oom", span);
+                        return TypedVal.undef();
+                    };
+                    pc += 1;
+                },
+                .str_len => {
+                    const s = self.getString(regs[ins.a]) orelse {
+                        self.setTrap("r01-t-invalid-handle", "r01-strings", span);
+                        return TypedVal.undef();
+                    };
+                    regs[ins.dst] = TypedVal.fromI32(@intCast(s.len));
+                    pc += 1;
+                },
+                .str_concat => {
+                    const sl = self.getString(regs[ins.a]) orelse {
+                        self.setTrap("r01-t-invalid-handle", "r01-strings", span);
+                        return TypedVal.undef();
+                    };
+                    const sr = self.getString(regs[ins.b]) orelse {
+                        self.setTrap("r01-t-invalid-handle", "r01-strings", span);
+                        return TypedVal.undef();
+                    };
+                    const merged = self.rt.allocator.alloc(u16, sl.len + sr.len) catch {
+                        self.setAbort("r05-execution-abort-oom", span);
+                        return TypedVal.undef();
+                    };
+                    @memcpy(merged[0..sl.len], sl);
+                    @memcpy(merged[sl.len..], sr);
+                    self.strings.append(self.rt.allocator, merged) catch {
+                        self.rt.allocator.free(merged);
+                        self.setAbort("r05-execution-abort-oom", span);
+                        return TypedVal.undef();
+                    };
+                    regs[ins.dst] = TypedVal.fromString(self.strings.items.len);
+                    pc += 1;
+                },
+                .str_slice => {
+                    const s = self.getString(regs[ins.a]) orelse {
+                        self.setTrap("r01-t-invalid-handle", "r01-strings", span);
+                        return TypedVal.undef();
+                    };
+                    const len_i: i32 = @intCast(s.len);
+                    var st = regs[ins.b].asI32();
+                    var en = regs[@intCast(ins.imm32)].asI32();
+                    if (st < 0) st = @max(len_i + st, 0);
+                    if (st > len_i) st = len_i;
+                    if (en < 0) en = @max(len_i + en, 0);
+                    if (en > len_i) en = len_i;
+                    if (en < st) en = st;
+                    regs[ins.dst] = self.allocString(s[@intCast(st)..@intCast(en)]) catch {
+                        self.setAbort("r05-execution-abort-oom", span);
+                        return TypedVal.undef();
+                    };
+                    pc += 1;
+                },
+                .str_char_code_at => {
+                    const s = self.getString(regs[ins.a]) orelse {
+                        self.setTrap("r01-t-invalid-handle", "r01-strings", span);
+                        return TypedVal.undef();
+                    };
+                    const idx_i = regs[ins.b].asI32();
+                    if (idx_i < 0 or @as(usize, @intCast(idx_i)) >= s.len) {
+                        self.setTrap("r01-t-bounds", "r01-strings", span);
+                        return TypedVal.undef();
+                    }
+                    regs[ins.dst] = TypedVal.fromI32(@intCast(s[@intCast(idx_i)]));
+                    pc += 1;
+                },
+                .add_dyn => {
+                    const l = regs[ins.a];
+                    const r = regs[ins.b];
+                    if (l.tag == .string and r.tag == .string) {
+                        const sl = self.getString(l).?;
+                        const sr = self.getString(r).?;
+                        const merged = self.rt.allocator.alloc(u16, sl.len + sr.len) catch {
+                            self.setAbort("r05-execution-abort-oom", span);
+                            return TypedVal.undef();
+                        };
+                        @memcpy(merged[0..sl.len], sl);
+                        @memcpy(merged[sl.len..], sr);
+                        self.strings.append(self.rt.allocator, merged) catch {
+                            self.rt.allocator.free(merged);
+                            self.setAbort("r05-execution-abort-oom", span);
+                            return TypedVal.undef();
+                        };
+                        regs[ins.dst] = TypedVal.fromString(self.strings.items.len);
+                    } else if (l.tag == .f64 or r.tag == .f64) {
+                        regs[ins.dst] = TypedVal.fromF64Bits(canonF64(asNumF64(l) + asNumF64(r)));
+                    } else {
+                        regs[ins.dst] = TypedVal.fromI32(l.asI32() +% r.asI32());
+                    }
+                    pc += 1;
+                },
+                .sub_dyn => {
+                    const l = regs[ins.a];
+                    const r = regs[ins.b];
+                    if (l.tag == .f64 or r.tag == .f64) {
+                        regs[ins.dst] = TypedVal.fromF64Bits(canonF64(asNumF64(l) - asNumF64(r)));
+                    } else {
+                        regs[ins.dst] = TypedVal.fromI32(l.asI32() -% r.asI32());
+                    }
+                    pc += 1;
+                },
+                .mul_dyn => {
+                    const l = regs[ins.a];
+                    const r = regs[ins.b];
+                    if (l.tag == .f64 or r.tag == .f64) {
+                        regs[ins.dst] = TypedVal.fromF64Bits(canonF64(asNumF64(l) * asNumF64(r)));
+                    } else {
+                        regs[ins.dst] = TypedVal.fromI32(l.asI32() *% r.asI32());
+                    }
+                    pc += 1;
+                },
+                .div_dyn => {
+                    const l = regs[ins.a];
+                    const r = regs[ins.b];
+                    if (l.tag == .f64 or r.tag == .f64) {
+                        regs[ins.dst] = TypedVal.fromF64Bits(canonF64(asNumF64(l) / asNumF64(r)));
+                    } else {
+                        const a = l.asI32();
+                        const b = r.asI32();
+                        if (b == 0 or (a == std.math.minInt(i32) and b == -1)) {
+                            self.setTrap("r01-t-div-zero", "r01-i32-div", span);
+                            return TypedVal.undef();
+                        }
+                        regs[ins.dst] = TypedVal.fromI32(@divTrunc(a, b));
+                    }
+                    pc += 1;
+                },
+                .lt_dyn => {
+                    const l = regs[ins.a];
+                    const r = regs[ins.b];
+                    regs[ins.dst] = TypedVal.fromBool(if (l.tag == .f64 or r.tag == .f64) asNumF64(l) < asNumF64(r) else l.asI32() < r.asI32());
+                    pc += 1;
+                },
+                .le_dyn => {
+                    const l = regs[ins.a];
+                    const r = regs[ins.b];
+                    regs[ins.dst] = TypedVal.fromBool(if (l.tag == .f64 or r.tag == .f64) asNumF64(l) <= asNumF64(r) else l.asI32() <= r.asI32());
+                    pc += 1;
+                },
+                .gt_dyn => {
+                    const l = regs[ins.a];
+                    const r = regs[ins.b];
+                    regs[ins.dst] = TypedVal.fromBool(if (l.tag == .f64 or r.tag == .f64) asNumF64(l) > asNumF64(r) else l.asI32() > r.asI32());
+                    pc += 1;
+                },
+                .ge_dyn => {
+                    const l = regs[ins.a];
+                    const r = regs[ins.b];
+                    regs[ins.dst] = TypedVal.fromBool(if (l.tag == .f64 or r.tag == .f64) asNumF64(l) >= asNumF64(r) else l.asI32() >= r.asI32());
+                    pc += 1;
+                },
+                .neg_dyn => {
+                    const v = regs[ins.a];
+                    if (v.tag == .f64) {
+                        regs[ins.dst] = TypedVal.fromF64Bits(canonF64(-v.asF64()));
+                    } else {
+                        regs[ins.dst] = TypedVal.fromI32(0 -% v.asI32());
+                    }
+                    pc += 1;
+                },
             }
         }
 
@@ -806,13 +1113,17 @@ const VmState = struct {
 /// Sole Public R05 Execution Interface:
 /// `verified module + FunctionId + typed argument frame + capability table + limits`.
 /// NEVER accepts unverified bytecode; NEVER lets managed exceptions escape across ABI.
-pub fn eval_bytecode(
+/// Execute an optional module initializer (`$moduleInit`) followed by `function_id`
+/// on shared module globals & GC heap, optionally exporting any string return value to UTF-8.
+pub fn eval_bytecode_with_init(
     rt: *rt_mod.R06Runtime,
     mod: *const bc.VerifiedModule,
+    init_function_id: ?[32]u8,
     function_id: [32]u8,
     arguments: []const TypedVal,
     capabilities: *rt_mod.CapabilityTable,
     limits: RequestLimits,
+    out_str_utf8: ?*std.ArrayListUnmanaged(u8),
 ) ExecutionOutcome {
     const fn_idx = mod.findFunctionIndex(function_id) orelse {
         return .{ .status = .invalid_request, .code = "r05-request-function", .fuel_remaining = limits.semantic_fuel };
@@ -826,6 +1137,23 @@ pub fn eval_bytecode(
     };
     defer state.deinit();
 
+    if (init_function_id) |init_id| {
+        if (mod.findFunctionIndex(init_id)) |init_idx| {
+            _ = state.execFunction(init_idx, &.{});
+            if (state.failed) return state.fail_outcome;
+            if (state.exc_active) {
+                return .{
+                    .status = .managed_exception,
+                    .value = state.exc_val,
+                    .code = "r01-e-uncaught",
+                    .fuel_remaining = state.fuel,
+                    .fuel_consumed = state.fuel_consumed,
+                    .instructions_executed = state.phys_ops,
+                };
+            }
+        }
+    }
+
     const rv = state.execFunction(fn_idx, arguments);
     if (state.failed) return state.fail_outcome;
     if (state.exc_active) {
@@ -838,6 +1166,17 @@ pub fn eval_bytecode(
             .instructions_executed = state.phys_ops,
         };
     }
+    if (rv.tag == .string) {
+        if (out_str_utf8) |dst_buf| {
+            if (state.getString(rv)) |units| {
+                const utf8 = std.unicode.utf16LeToUtf8Alloc(rt.allocator, units) catch null;
+                if (utf8) |u8s| {
+                    defer rt.allocator.free(u8s);
+                    dst_buf.appendSlice(rt.allocator, u8s) catch {};
+                }
+            }
+        }
+    }
     return .{
         .status = .ok,
         .value = rv,
@@ -845,6 +1184,17 @@ pub fn eval_bytecode(
         .fuel_consumed = state.fuel_consumed,
         .instructions_executed = state.phys_ops,
     };
+}
+
+pub fn eval_bytecode(
+    rt: *rt_mod.R06Runtime,
+    mod: *const bc.VerifiedModule,
+    function_id: [32]u8,
+    arguments: []const TypedVal,
+    capabilities: *rt_mod.CapabilityTable,
+    limits: RequestLimits,
+) ExecutionOutcome {
+    return eval_bytecode_with_init(rt, mod, null, function_id, arguments, capabilities, limits, null);
 }
 
 // ============================================================================

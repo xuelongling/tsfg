@@ -324,3 +324,48 @@ test "R05 Pre-Load Verifier & 200-Case Malicious Bytecode Fuzz Campaign" {
         }
     }
 }
+
+test "R05 VM v2 Lossless UTF-16 Strings (const_str, concat, slice, charCodeAt, lone surrogates, strict_eq)" {
+    const alloc = std.testing.allocator;
+    const rt = try rt_mod.R06Runtime.create(alloc, 1024 * 1024, 4096);
+    defer rt.destroy();
+
+    const s_hi = [_]u16{ 't', 's', 'f', 'g' };
+    const s_surr = [_]u16{ 0xD800, '!' }; // Lone surrogate preserved losslessly per ADR-0019!
+    const s_expect = [_]u16{ 'f', 'g', 0xD800 };
+
+    const ops = [_]bc.RawOpSpec{
+        .{ .op = .fuel, .a = 1, .start = 0, .end = 5 },
+        .{ .op = .const_str, .dst = 0, .imm32 = 0, .start = 5, .end = 10 }, // "tsfg"
+        .{ .op = .const_str, .dst = 1, .imm32 = 1, .start = 10, .end = 15 }, // "\uD800!"
+        .{ .op = .str_concat, .dst = 2, .a = 0, .b = 1, .start = 15, .end = 20 }, // "tsfg\uD800!" (len 6)
+        .{ .op = .const_i32, .dst = 3, .imm32 = 2, .start = 20, .end = 22 },
+        .{ .op = .const_i32, .dst = 4, .imm32 = 5, .start = 22, .end = 24 },
+        .{ .op = .str_slice, .dst = 5, .a = 2, .b = 3, .imm32 = 4, .start = 24, .end = 28 }, // "fg\uD800"
+        .{ .op = .const_str, .dst = 6, .imm32 = 2, .start = 28, .end = 30 }, // expected "fg\uD800"
+        .{ .op = .strict_eq, .dst = 7, .a = 5, .b = 6, .imm32 = 0, .start = 30, .end = 32 }, // true (1)
+        .{ .op = .str_char_code_at, .dst = 8, .a = 5, .b = 3, .start = 32, .end = 35 }, // charCodeAt(2) == 0xD800
+        .{ .op = .str_len, .dst = 9, .a = 2, .start = 35, .end = 38 }, // 6
+        .{ .op = .add_i32, .dst = 10, .a = 8, .b = 9, .start = 38, .end = 40 }, // 0xD800 + 6
+        .{ .op = .add_i32, .dst = 11, .a = 10, .b = 7, .start = 40, .end = 42 }, // 0xD800 + 6 + 1 = 55303
+        .{ .op = .ret, .a = 11, .start = 42, .end = 45 },
+    };
+
+    const bytes = try bc.encodeModule(alloc, .{
+        .module_id = MOD_ID,
+        .abi_hash = ABI_HASH,
+        .static_schema_hash = SCHEMA_HASH,
+        .const_pool_str = &.{ &s_hi, &s_surr, &s_expect },
+        .functions = &.{
+            .{ .function_id = makeFnId(42), .param_count = 0, .reg_count = 12, .ops = &ops },
+        },
+    });
+    defer alloc.free(bytes);
+
+    var mod = try bc.verifyAndPredecode(alloc, bytes, ABI_HASH);
+    defer mod.deinit();
+
+    const out = vm.eval_bytecode(rt, &mod, makeFnId(42), &.{}, &rt.capabilities, .{});
+    try std.testing.expectEqual(vm.OutcomeStatus.ok, out.status);
+    try std.testing.expectEqual(@as(i32, 0xD800 + 6 + 1), out.value.asI32());
+}

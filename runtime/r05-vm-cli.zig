@@ -56,6 +56,7 @@ pub fn main(init: std.process.Init) !void {
 
     var unfused = false;
     var fuel: u64 = 100_000;
+    var init_fn_idx: ?usize = null;
     var call_args: std.ArrayListUnmanaged(vm.TypedVal) = .empty;
     defer call_args.deinit(allocator);
 
@@ -70,6 +71,9 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, args[ai], "--fuel") and ai + 1 < args.len) {
             ai += 1;
             fuel = try std.fmt.parseInt(u64, args[ai], 10);
+        } else if (std.mem.eql(u8, args[ai], "--init-fn") and ai + 1 < args.len) {
+            ai += 1;
+            init_fn_idx = try std.fmt.parseInt(usize, args[ai], 10);
         } else if (std.mem.eql(u8, args[ai], "--args") and ai + 1 < args.len) {
             ai += 1;
             var it = std.mem.splitScalar(u8, args[ai], ',');
@@ -79,6 +83,13 @@ pub fn main(init: std.process.Init) !void {
                     try call_args.append(allocator, vm.TypedVal.undef());
                 } else if (std.mem.eql(u8, tok, "null")) {
                     try call_args.append(allocator, vm.TypedVal.nullVal());
+                } else if (std.mem.eql(u8, tok, "true")) {
+                    try call_args.append(allocator, vm.TypedVal.fromBool(true));
+                } else if (std.mem.eql(u8, tok, "false")) {
+                    try call_args.append(allocator, vm.TypedVal.fromBool(false));
+                } else if (std.mem.startsWith(u8, tok, "f64:")) {
+                    const f = try std.fmt.parseFloat(f64, tok[4..]);
+                    try call_args.append(allocator, vm.TypedVal.fromF64Bits(@bitCast(f)));
                 } else {
                     const n = try std.fmt.parseInt(i32, tok, 10);
                     try call_args.append(allocator, vm.TypedVal.fromI32(n));
@@ -92,6 +103,13 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("r05-vm-fn-oob\n", .{});
         std.process.exit(5);
     }
+    const init_fid: ?[32]u8 = if (init_fn_idx) |ii| blk: {
+        if (ii >= mod.functions.len) {
+            std.debug.print("r05-vm-init-fn-oob\n", .{});
+            std.process.exit(5);
+        }
+        break :blk mod.functions[ii].function_id;
+    } else null;
 
     const rt = try rt_mod.R06Runtime.create(allocator, 4 * 1024 * 1024, 65536);
     defer rt.destroy();
@@ -100,11 +118,11 @@ pub fn main(init: std.process.Init) !void {
         var timer = std.Io.Timestamp.now(io, .awake);
         var last_val: i32 = 0;
         for (0..bench_iters) |_| {
-            const o = vm.eval_bytecode(rt, &mod, mod.functions[fn_idx].function_id, call_args.items, &rt.capabilities, .{
+            const o = vm.eval_bytecode_with_init(rt, &mod, init_fid, mod.functions[fn_idx].function_id, call_args.items, &rt.capabilities, .{
                 .semantic_fuel = fuel,
                 .physical_instructions = 10_000_000,
                 .use_superinstructions = !unfused,
-            });
+            }, null);
             last_val = o.value.asI32();
         }
         const elapsed_ns = timer.untilNow(io, .awake).toNanoseconds();
@@ -120,19 +138,45 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    const res = vm.eval_bytecode(rt, &mod, mod.functions[fn_idx].function_id, call_args.items, &rt.capabilities, .{
+    var str_buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer str_buf.deinit(allocator);
+    const res = vm.eval_bytecode_with_init(rt, &mod, init_fid, mod.functions[fn_idx].function_id, call_args.items, &rt.capabilities, .{
         .semantic_fuel = fuel,
         .use_superinstructions = !unfused,
-    });
+    }, &str_buf);
     var out: std.ArrayListUnmanaged(u8) = .empty;
     defer out.deinit(allocator);
     try out.print(
         allocator,
-        "{{\"status\":\"{s}\",\"tag\":{d},\"i32\":{d},\"code\":\"{s}\",\"fuelConsumed\":{d},\"instructions\":{d},\"sourceStart\":{d},\"sourceEnd\":{d}}}\n",
+        "{{\"status\":\"{s}\",\"tag\":{d},\"i32\":{d},\"f64Bits\":\"{x:0>16}\",\"bool\":{},\"str\":",
         .{
             @tagName(res.status),
             @intFromEnum(res.value.tag),
             res.value.asI32(),
+            res.value.payload,
+            res.value.payload != 0,
+        },
+    );
+    // JSON-escaped string output
+    try out.append(allocator, '"');
+    for (str_buf.items) |ch| {
+        if (ch == '"' or ch == '\\') {
+            try out.append(allocator, '\\');
+            try out.append(allocator, ch);
+        } else if (ch == '\n') {
+            try out.appendSlice(allocator, "\\n");
+        } else if (ch == '\r') {
+            try out.appendSlice(allocator, "\\r");
+        } else if (ch == '\t') {
+            try out.appendSlice(allocator, "\\t");
+        } else {
+            try out.append(allocator, ch);
+        }
+    }
+    try out.print(
+        allocator,
+        "\",\"code\":\"{s}\",\"fuelConsumed\":{d},\"instructions\":{d},\"sourceStart\":{d},\"sourceEnd\":{d}}}\n",
+        .{
             res.code,
             res.fuel_consumed,
             res.instructions_executed,
