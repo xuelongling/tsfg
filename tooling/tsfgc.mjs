@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { constants } from "node:fs";
-import { open, readFile } from "node:fs/promises";
+import { open, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { compileHir, compileProgram, compileSourceCore, compileOwnedCore, compileOwnedHir, compileOwnedStaticProgram, compileStaticProgram, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
 import {readCommonProgramHir} from '../compiler/common-program-hir.mjs';
 import {checkCommonJsonFileSize,commonHirFormat,commonJson} from '../compiler/common-program-common.mjs';
@@ -15,6 +16,13 @@ import { familyOf } from '../compiler/module-callable-common.mjs';
 import { checkSystemQueryFileSize, systemQueryRequestContext } from '../compiler/system-query-facts.mjs';
 import { canonical } from '../compiler/identity.mjs';
 import { compileTsSourceToR05Bytecode, runTsOnR05ZigVm } from '../compiler/r05-ts-driver.mjs';
+import { compileTsToWindowsAot, runTsOnWindowsAot } from '../compiler/tsfg-aot-driver.mjs';
+import { buildTsfgProject, loadLocalPackage } from './r12-project-and-pkg.mjs';
+import { inspectAbi, inspectTbcBytecode, inspectTmeta } from './debugger/r12-inspector-debugger.mjs';
+import { startLspStdioServer } from './lsp/r12-tsfg-lsp.mjs';
+import { startDapStdioServer } from './debugger/tsfg-dap.mjs';
+import { R09CompilerService } from './compiler-service/r09-compiler-service.mjs';
+import { contractSetId, WINDOWS_X64_TARGET } from '../compiler/r04-identity.mjs';
 
 /** @param {string} file @param {(size: bigint) => number} checkSize @param {'Query'|'HIR'|'Common'|'Generic package RPC'} kind */
 async function readStableInputFile(file,checkSize,kind){
@@ -47,13 +55,125 @@ async function readStableInputFile(file,checkSize,kind){
 const readCommonInputFile = file => readStableInputFile(file,checkCommonJsonFileSize,'Common');
 
 try {
-  const optionNames = ["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request", "--gpu-request", "--package-response", "--ts", "--entry", "--args", "--fuel", "--unfused"];
+  const rawArgs = process.argv.slice(2);
+  const subcmd = rawArgs[0];
+
+  // Unified Developer Product Subcommands (preserves all legacy `--ts` / `--input` CLI flags!)
+  if (subcmd === "version" || subcmd === "--version" || subcmd === "-v") {
+    process.stdout.write(JSON.stringify({ name: "tsfgc", version: "1.0.0", target: WINDOWS_X64_TARGET.target, contractSetId: contractSetId() }) + "\n");
+    process.exit(0);
+  }
+  if (subcmd === "help" || subcmd === "--help" || subcmd === "-h") {
+    process.stdout.write(
+      "Usage: tsfgc <command> [options]\n" +
+      "  build <project-dir> [--out <dir>] [--clean] [--aot] [--mode exe|dll] [--profile debug|release]\n" +
+      "  run <file.ts> [--entry <fn>] [--args a,b] [--fuel N] [--profile-trace <path>] [--breakpoint-pc N]\n" +
+      "  aot <file.ts> [--entry <fn>] [--mode exe|dll] [--out <path>] [--profile debug|release] [--run] [--args a,b]\n" +
+      "  inspect <artifact.tbc|.tmeta|.tsfgabi|.tpkg>\n" +
+      "  lsp              Start JSON-RPC 2.0 tsfg-lsp over stdio\n" +
+      "  dap              Start Debug Adapter Protocol tsfg-dap over stdio\n" +
+      "  service          Start CompilerService hot-reload daemon\n" +
+      "  version          Print toolchain version and contractSetId\n",
+    );
+    process.exit(0);
+  }
+  if (subcmd === "lsp") {
+    startLspStdioServer();
+    await new Promise(() => {});
+  }
+  if (subcmd === "dap") {
+    startDapStdioServer();
+    await new Promise(() => {});
+  }
+  if (subcmd === "service") {
+    const svc = new R09CompilerService();
+    process.stdout.write(JSON.stringify({ status: "ready", service: "tsfg-compiler-service", workRoot: svc.workRoot }) + "\n");
+    process.exit(0);
+  }
+  if (subcmd === "inspect") {
+    const file = rawArgs[1];
+    if (!file) throw new TypeError("tsfgc inspect: artifact file path required");
+    const bytes = await readFile(file);
+    let info;
+    if (file.endsWith(".tbc")) info = inspectTbcBytecode(bytes);
+    else if (file.endsWith(".tmeta")) info = inspectTmeta(bytes);
+    else if (file.endsWith(".tsfgabi")) info = inspectAbi(bytes);
+    else if (file.endsWith(".tpkg")) {
+      const pkg = loadLocalPackage(bytes);
+      info = { name: pkg.name, version: pkg.version, abiHash: pkg.abiHash, exports: pkg.exports, digest: pkg.digest };
+    } else {
+      throw new TypeError(`tsfgc inspect: unsupported extension for '${file}'`);
+    }
+    process.stdout.write(JSON.stringify(info, null, 2) + "\n");
+    process.exit(0);
+  }
+  if (subcmd === "build") {
+    const projectDir = rawArgs[1] ?? ".";
+    const opts = { clean: false, emitAot: false, profile: "release", aotMode: "exe" };
+    for (let i = 2; i < rawArgs.length; i++) {
+      if (rawArgs[i] === "--clean") opts.clean = true;
+      else if (rawArgs[i] === "--aot") opts.emitAot = true;
+      else if (rawArgs[i] === "--out") opts.outDir = rawArgs[++i];
+      else if (rawArgs[i] === "--cache") opts.cacheDir = rawArgs[++i];
+      else if (rawArgs[i] === "--profile") opts.profile = rawArgs[++i];
+      else if (rawArgs[i] === "--mode") opts.aotMode = rawArgs[++i];
+    }
+    const built = await buildTsfgProject(path.resolve(projectDir), opts);
+    process.stdout.write(JSON.stringify({
+      status: "ok",
+      buildKey: built.buildKey,
+      cacheHit: built.cacheHit,
+      outputDigest: built.outputDigest,
+      usedRealTsPipeline: built.outputs.usedRealTsPipeline,
+      paths: built.paths,
+    }) + "\n");
+    process.exit(0);
+  }
+  if (subcmd === "run") {
+    const tsFile = rawArgs[1];
+    if (!tsFile) throw new TypeError("tsfgc run: .ts file path required");
+    const runOpts = { isFile: true, entry: "main", args: [] };
+    for (let i = 2; i < rawArgs.length; i++) {
+      if (rawArgs[i] === "--entry") runOpts.entry = rawArgs[++i];
+      else if (rawArgs[i] === "--args") runOpts.args = rawArgs[++i].split(",").filter(Boolean);
+      else if (rawArgs[i] === "--fuel") runOpts.fuel = Number(rawArgs[++i]);
+      else if (rawArgs[i] === "--unfused") runOpts.unfused = true;
+      else if (rawArgs[i] === "--profile-trace") runOpts.profileTrace = rawArgs[++i];
+      else if (rawArgs[i] === "--breakpoint-pc") runOpts.breakpointPc = Number(rawArgs[++i]);
+    }
+    const { result } = await runTsOnR05ZigVm(path.resolve(tsFile), runOpts);
+    process.stdout.write(JSON.stringify(result) + "\n");
+    process.exit(0);
+  }
+  if (subcmd === "aot") {
+    const tsFile = rawArgs[1];
+    if (!tsFile) throw new TypeError("tsfgc aot: .ts file path required");
+    const aotOpts = { isFile: true, entry: "main", mode: "exe", profile: "release", args: [], run: false };
+    for (let i = 2; i < rawArgs.length; i++) {
+      if (rawArgs[i] === "--entry") aotOpts.entry = rawArgs[++i];
+      else if (rawArgs[i] === "--mode") aotOpts.mode = rawArgs[++i];
+      else if (rawArgs[i] === "--out") aotOpts.outPath = path.resolve(rawArgs[++i]);
+      else if (rawArgs[i] === "--profile") aotOpts.profile = rawArgs[++i];
+      else if (rawArgs[i] === "--args") aotOpts.args = rawArgs[++i].split(",").filter(Boolean);
+      else if (rawArgs[i] === "--run") aotOpts.run = true;
+    }
+    if (aotOpts.run) {
+      const { artifact, result } = await runTsOnWindowsAot(path.resolve(tsFile), aotOpts);
+      process.stdout.write(JSON.stringify({ ...result, exePath: artifact.exePath, pdbPath: artifact.pdbPath }) + "\n");
+    } else {
+      const artifact = await compileTsToWindowsAot(path.resolve(tsFile), aotOpts);
+      process.stdout.write(JSON.stringify({ status: "ok", mode: artifact.mode, profile: artifact.profile, outPath: artifact.outPath, pdbPath: artifact.pdbPath }) + "\n");
+    }
+    process.exit(0);
+  }
+
+  const optionNames = ["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request", "--gpu-request", "--package-response", "--ts", "--entry", "--args", "--fuel", "--unfused", "--out", "--profile", "--optimize"];
   const options = new Map();
-  const args = process.argv.slice(2);
+  const args = rawArgs;
   for (let i = 0; i < args.length; i++) {
     const option = args[i];
     if (!optionNames.includes(option) || options.has(option)) throw new TypeError("r03-cli-options: invalid or duplicate option");
-    if (option === "--unfused") {
+    if (option === "--unfused" || option === "--optimize") {
       options.set(option, "true");
       continue;
     }
@@ -65,18 +185,44 @@ try {
     const tsPath = options.get("--ts");
     const emit = options.get("--emit") ?? "r05-run";
     const entry = options.get("--entry") ?? "main";
-    if (emit !== "r05-run" && emit !== "r05-bytecode") {
-      throw new TypeError("r05-cli-options: --ts requires --emit r05-run|r05-bytecode");
+    if (!["r05-run", "r05-bytecode", "aot-exe", "aot-dll", "aot-run"].includes(emit)) {
+      throw new TypeError("r05-cli-options: --ts requires --emit r05-run|r05-bytecode|aot-exe|aot-dll|aot-run");
     }
-    if (emit === "r05-bytecode") {
+    if (emit === "aot-exe" || emit === "aot-dll" || emit === "aot-run") {
+      const argList = options.has("--args") ? options.get("--args").split(",").filter(Boolean) : [];
+      const aotOpts = {
+        isFile: true,
+        entry,
+        args: argList,
+        mode: emit === "aot-dll" ? "dll" : "exe",
+        profile: options.get("--profile") ?? "release",
+        optimize: options.has("--optimize") ? true : undefined,
+        outPath: options.has("--out") ? path.resolve(options.get("--out")) : undefined,
+        frontend: options.get("--frontend"),
+        core: options.get("--core"),
+      };
+      if (emit === "aot-run") {
+        const { artifact, result } = await runTsOnWindowsAot(tsPath, aotOpts);
+        process.stdout.write(JSON.stringify({ ...result, exePath: artifact.exePath, pdbPath: artifact.pdbPath }) + "\n");
+      } else {
+        const artifact = await compileTsToWindowsAot(tsPath, aotOpts);
+        process.stdout.write(JSON.stringify({ status: "ok", outPath: artifact.outPath, pdbPath: artifact.pdbPath }) + "\n");
+      }
+    } else if (emit === "r05-bytecode") {
       const sourceText = await readFile(tsPath, "utf8");
       const compiled = compileTsSourceToR05Bytecode(sourceText, {
         filePath: tsPath,
+        resolveImports: true,
         entry,
+        optimize: options.has("--optimize"),
         frontend: options.get("--frontend"),
         core: options.get("--core"),
       });
-      process.stdout.write(compiled.bytes);
+      if (options.has("--out")) {
+        await writeFile(options.get("--out"), compiled.bytes);
+      } else {
+        process.stdout.write(compiled.bytes);
+      }
     } else {
       const argList = options.has("--args") ? options.get("--args").split(",").filter(Boolean) : [];
       const { result } = await runTsOnR05ZigVm(tsPath, {
@@ -84,6 +230,7 @@ try {
         entry,
         args: argList,
         unfused: options.has("--unfused"),
+        optimize: options.has("--optimize"),
         fuel: options.has("--fuel") ? Number(options.get("--fuel")) : undefined,
         frontend: options.get("--frontend"),
         core: options.get("--core"),

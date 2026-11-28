@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: MIT
 // Shared R04 test helpers (non-test module so importing never registers extra subtests).
 import assert from 'node:assert/strict';
+import { existsSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { WINDOWS_X64_TARGET } from '../../compiler/r04-identity.mjs';
+import {
+  resolveClangClExe,
+  resolveLldLinkExe,
+  resolveTempDir,
+  resolveZigCacheEnv,
+  resolveZigExe,
+} from '../../compiler/tsfg-paths.mjs';
 
-export const ZIG_EXE = process.env.TSFG_LOCKED_ZIG ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\zig\\zig.exe';
-export const CLANG_CL = process.env.TSFG_CLANG_CL ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\llvm\\bin\\clang-cl.exe';
-export const LLD_LINK = process.env.TSFG_LLD_LINK ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\llvm\\bin\\lld-link.exe';
-export const BUILD_DIR = process.env.TSFG_R04_BUILD_DIR ?? 'E:\\tsfg-build\\r04';
+export const ZIG_EXE = resolveZigExe();
+export const CLANG_CL = resolveClangClExe();
+export const LLD_LINK = resolveLldLinkExe();
+export const BUILD_DIR = process.env.TSFG_R04_BUILD_DIR ?? path.join(resolveTempDir('r04-build'));
 
 export function buildFullR04AbiSpec() {
   return {
@@ -144,15 +152,32 @@ export function buildFullR04AbiSpec() {
 
 let validatorBuilt = null;
 export async function ensureR04ValidatorExe() {
-  if (validatorBuilt) return validatorBuilt;
+  if (validatorBuilt && existsSync(validatorBuilt)) return validatorBuilt;
   await mkdir(BUILD_DIR, { recursive: true });
   const exe = path.join(BUILD_DIR, 'tsfg-r04-validator.exe');
+  const srcPath = path.resolve('runtime', 'r04-validator-cli.zig');
+  if (existsSync(exe) && existsSync(srcPath) && statSync(exe).mtimeMs >= statSync(srcPath).mtimeMs) {
+    validatorBuilt = exe;
+    return exe;
+  }
+  const tmpExe = path.join(BUILD_DIR, `tsfg-r04-validator.${process.pid}.${Date.now()}.exe`);
   const res = spawnSync(ZIG_EXE, [
     'build-exe', 'r04-validator-cli.zig',
     '-target', 'x86_64-windows-msvc', '-mcpu', 'x86_64_v2', '-O', 'ReleaseSafe', '-fno-lto',
-    `-femit-bin=${exe}`,
-  ], { cwd: path.resolve('runtime'), windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+    `-femit-bin=${tmpExe}`,
+  ], { cwd: path.resolve('runtime'), windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: resolveZigCacheEnv() });
   assert.equal(res.status, 0, `zig build-exe r04-validator-cli failed:\n${res.stderr.toString('utf8')}`);
-  validatorBuilt = exe;
-  return exe;
+  try {
+    renameSync(tmpExe, exe);
+    validatorBuilt = exe;
+  } catch {
+    // Another worker process won the atomic publish race — use our private compiled exe or existing shared exe!
+    if (existsSync(exe)) {
+      try { unlinkSync(tmpExe); } catch {}
+      validatorBuilt = exe;
+    } else {
+      validatorBuilt = tmpExe;
+    }
+  }
+  return validatorBuilt;
 }

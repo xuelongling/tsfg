@@ -5,27 +5,24 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  compileTsGpuKernelToSpirv,
   emitSpirv13ComputeKernel,
   runCpuGpuReference,
   validateSpirvBinary,
   verifyGpuKernelSpec,
 } from '../../compiler/r11-gpu-kernel-compiler.mjs';
 import { compareDomainRelaxedOutcomes } from '../../tooling/diff-platform/r08-diff-runner.mjs';
+import { resolveTempDir, resolveVulkanConfig, resolveZigCacheEnv, resolveZigExe } from '../../compiler/tsfg-paths.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
-const ZIG = process.env.TSFG_ZIG ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\zig\\zig.exe';
-const VULKAN_LOADER = 'E:\\tsfg-cache\\lavapipe\\vulkan-1.dll';
-const LAVAPIPE_ICD = 'E:\\tsfg-cache\\lavapipe\\lvp_icd.x86_64.json';
-const CLI_EXE = path.join('E:\\tsfg-temp', 'r11-cli-bin', 'tsfg-r11-gpu.exe');
+const ZIG = resolveZigExe();
+const VK_CFG = resolveVulkanConfig();
+const VULKAN_LOADER = VK_CFG.loaderPath;
+const LAVAPIPE_ICD = VK_CFG.fallbackIcdPath;
+const CLI_EXE = path.join(resolveTempDir('r11-cli-bin'), 'tsfg-r11-gpu.exe');
 
 function zigEnv() {
-  return {
-    ...process.env,
-    TEMP: 'E:\\tsfg-temp',
-    TMP: 'E:\\tsfg-temp',
-    ZIG_LOCAL_CACHE_DIR: 'E:\\tsfg-cache\\zig-local',
-    ZIG_GLOBAL_CACHE_DIR: 'E:\\tsfg-cache\\zig-global',
-  };
+  return resolveZigCacheEnv();
 }
 
 test('R11 GPU Kernel Legality Verifier & SPIR-V 1.3 Structural Validator (Illegal Refs/Exceptions/Alias/Feature Rejection)', () => {
@@ -140,5 +137,67 @@ test('R11 REAL Vulkan 1.3 Lavapipe Compute Execution, In-Flight Hot-Reload Recla
     assert.equal(cmp1.ok, true, `v1 GPU mismatch at [${i}]: gpu=${gpuV1[i]} ref=${refV1[i]} (${cmp1.reason})`);
     const cmp2 = compareDomainRelaxedOutcomes(refV2[i], gpuV2[i], { domain: 'gpu', absTolerance: 1e-4, relTolerance: 1e-4 });
     assert.equal(cmp2.ok, true, `v2 GPU mismatch at [${i}]: gpu=${gpuV2[i]} ref=${refV2[i]} (${cmp2.reason})`);
+  }
+});
+
+test('R11 Real TypeScript `@gpu_kernel` -> SPIR-V 1.3 Compiler Execution on Live Vulkan 1.3 Device', async () => {
+  const count = 1024;
+  const tsKernelV1 = `
+@gpu_kernel
+export function saxpy_add(a: ReadSpan<f32>, b: ReadSpan<f32>, out: Span<f32>): void {
+  const s: f32 = a[i] + b[i];
+  out[i] = s;
+}
+`;
+  const tsKernelV2 = `
+@gpu_kernel
+export function saxpy_mad(a: ReadSpan<f32>, b: ReadSpan<f32>, out: Span<f32>): void {
+  const prod: f32 = a[i] * b[i];
+  out[i] = prod + a[i];
+}
+`;
+  const compiled1 = compileTsGpuKernelToSpirv(tsKernelV1, { elementCount: count, workgroupSize: 64 });
+  const compiled2 = compileTsGpuKernelToSpirv(tsKernelV2, { elementCount: count, workgroupSize: 64 });
+  assert.equal(compiled1.validation.valid, true);
+  assert.equal(compiled2.validation.valid, true);
+
+  // Reject forbidden throw/managed object inside @gpu_kernel source
+  assert.throws(
+    () => compileTsGpuKernelToSpirv('@gpu_kernel function bad(a: ReadSpan<f32>, out: Span<f32>) { throw 1; out[i] = a[i]; }'),
+    /r11-gpu-illegal-effect/,
+  );
+
+  // Execute the TS-compiled SPIR-V binaries directly on Vulkan 1.3!
+  const workDir = resolveTempDir('r11-ts-spirv');
+  await mkdir(workDir, { recursive: true });
+  const spv1Path = path.join(workDir, 'ts_v1.spv');
+  const spv2Path = path.join(workDir, 'ts_v2.spv');
+  const out1Path = path.join(workDir, 'ts_out1.bin');
+  const out2Path = path.join(workDir, 'ts_out2.bin');
+  await writeFile(spv1Path, compiled1.bytes);
+  await writeFile(spv2Path, compiled2.bytes);
+
+  const run = spawnSync(CLI_EXE, [VULKAN_LOADER, LAVAPIPE_ICD, spv1Path, spv2Path, out1Path, out2Path], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: zigEnv(),
+  });
+  assert.equal(run.status, 0, `r11-gpu-cli failed on TS-compiled SPIR-V:\n${run.stdout}\n${run.stderr}`);
+
+  const hostA = new Float32Array(count);
+  const hostB = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    hostA[i] = Math.fround(i * 0.5 + 1.25);
+    hostB[i] = Math.fround((i % 17) * 0.25 - 2.0);
+  }
+  const ref1 = runCpuGpuReference('f32_add', hostA, hostB);
+  const ref2 = runCpuGpuReference('f32_mad', hostA, hostB);
+  const raw1 = await readFile(out1Path);
+  const raw2 = await readFile(out2Path);
+  const gpu1 = new Float32Array(raw1.buffer, raw1.byteOffset, count);
+  const gpu2 = new Float32Array(raw2.buffer, raw2.byteOffset, count);
+  for (let i = 0; i < count; i++) {
+    assert.equal(compareDomainRelaxedOutcomes(ref1[i], gpu1[i], { domain: 'gpu', absTolerance: 1e-5, relTolerance: 1e-5 }).ok, true);
+    assert.equal(compareDomainRelaxedOutcomes(ref2[i], gpu2[i], { domain: 'gpu', absTolerance: 1e-4, relTolerance: 1e-4 }).ok, true);
   }
 });

@@ -1,0 +1,29 @@
+tsfg (TypeScript for Games) — Third-Party Licenses and Notices
+==============================================================
+
+This product includes software developed as part of the tsfg project (MIT License).
+See LICENSE for the full MIT license text.
+
+This distribution and build closure incorporate or interface with the following
+third-party components:
+
+1. TypeScript (Microsoft Corporation)
+   - License: Apache License 2.0 (SPDX-License-Identifier: Apache-2.0)
+   - Used in: tsfg Go/TypeScript static-subset compiler frontend (`tsfg-frontend.exe`).
+
+2. LLVM & MLIR Project
+   - License: Apache License 2.0 with LLVM Exception
+     (SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception)
+   - Used in: tsfg Core IR compiler (`tsfg-core-ir.exe`) and Windows x64 AOT
+     codegen/linker toolchain (`clang-cl.exe`, `lld-link.exe`).
+   - Note: The shipping tsfg runtime (`tsfg-runtime.exe`, `tsfg-r05-vm.exe`,
+     `tsfg_runtime.lib`) has ZERO runtime dependency on LLVM, MLIR, or Clang.
+
+3. Zig Standard Library & Compiler Toolchain
+   - License: MIT License (SPDX-License-Identifier: MIT)
+   - Used in: Native runtime (`tsfg-runtime`, `tsfg-r05-vm`, GC, ECS, Jobs, Vulkan).
+
+4. Mesa Lavapipe Software Vulkan 1.3 ICD (Optional Fallback Redistributable)
+   - License: MIT License (SPDX-License-Identifier: MIT)
+   - Used as: Explicit/fallback Vulkan 1.3 software compute ICD when a host lacks
+     a hardware Vulkan 1.3 GPU driver.

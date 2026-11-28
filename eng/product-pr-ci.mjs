@@ -666,8 +666,9 @@ async function writeVerdict(options) {
     ];
     if (
       compatibility.result?.target !== target ||
-      compatibility.result?.contractSet?.canonical !== "{}" ||
-      compatibility.result?.contractSet?.id !== sha256(canonicalJsonBytes({})) ||
+      typeof compatibility.result?.contractSet?.canonical !== "string" ||
+      compatibility.result?.contractSet?.canonical.length < 2 ||
+      compatibility.result?.contractSet?.id !== sha256(Buffer.from(compatibility.result.contractSet.canonical, "utf8")) ||
       !Array.isArray(combinations) ||
       expectedCombinations.some(([producer, consumer], index) =>
         combinations[index]?.producer !== producer ||

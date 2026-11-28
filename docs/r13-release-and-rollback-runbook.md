@@ -14,16 +14,15 @@
 
 在任何发布候选打包前执行以下自动化检查：
 
-1. **Runtime 依赖封闭性审计**：运行 `auditRuntimeDependencyClosure`，确认发布 runtime（`runtime/r04..r11*.zig`）对 TypeScript、MLIR、LLVM、Clang 与任何 JS VM 保持零依赖。
-2. **许可证与 SBOM 审计**：运行 `auditSpdxAndGenerateSbom`，确认全部源码携带 `SPDX-License-Identifier` 并生成 SPDX 2.3 SBOM JSON 与 `NOTICE`。
-3. **双目录可复现构建证明**：运行 `verifyReproducibleDualDirBuild`，确认两个独立输出目录产出的 `.tsfgabi`、`.tmeta`、`.tbc`、`.tpkg` 与 Zig 绑定字节级一致。
-4. **全量功能与契约回归**：
+1. **Runtime 依赖封闭性与 PE32+ 导入表审计**：运行 `auditRuntimeDependencyClosure`，确认发布 runtime 源码（`runtime/*.zig`）与实编 Windows x64 PE32+ 二进制（`tsfg-runtime.exe`、`tsfg-r05-vm.exe`）导入表均对 TypeScript、MLIR、LLVM、Clang 与任何 JS VM 保持零依赖。
+2. **全仓许可证、NOTICE 与 SPDX 2.3 SBOM 审计**：运行 `auditSpdxAndGenerateSbom`，确认全仓生产源码 100% 携带 `SPDX-License-Identifier`、根 `NOTICE` 完整，并生成含 ISO-8601 `creationInfo.created` 与 Git OID 的 SPDX 2.3 SBOM JSON。
+3. **独立 Windows x64 SDK 干净目录端到端验证**：运行 `node eng/build-windows-sdk.mjs --zip`，并在无仓库检出的隔离目录执行 `bin\tsfgc.cmd run` 与 `bin\tsfg-runtime.exe`。
+4. **双目录可复现构建证明**：运行 `verifyReproducibleDualDirBuild`，确认两个独立输出目录产出的 `.tsfgabi`、`.tmeta`、`.tbc`、`.tpkg` 与 Zig 绑定字节级一致。
+5. **全量功能与契约回归**：
    ```powershell
    Set-Location E:\ws\pro_tsfg\tcfg
-   $env:TEMP = 'E:\tsfg-temp'; $env:TMP = 'E:\tsfg-temp'
-   $env:ZIG_LOCAL_CACHE_DIR = 'E:\tsfg-cache\zig-local'
-   $env:ZIG_GLOBAL_CACHE_DIR = 'E:\tsfg-cache\zig-global'
-   node --test tests/r04/*.test.mjs tests/r05/*.test.mjs tests/r07/*.test.mjs tests/r08/*.test.mjs tests/r09/*.test.mjs tests/r10/*.test.mjs tests/r11/*.test.mjs tests/r12/*.test.mjs tests/r13/*.test.mjs
+   . E:\tsfg-cache\tsfg-env.ps1
+   & $env:TSFG_LOCKED_NODE --test tests/r04/*.test.mjs tests/r05/*.test.mjs tests/r07/*.test.mjs tests/r08/*.test.mjs tests/r09/*.test.mjs tests/r10/*.test.mjs tests/r11/*.test.mjs tests/r12/*.test.mjs tests/r13/*.test.mjs
    ```
 
 ## 3. 升级与回滚流程

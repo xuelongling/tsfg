@@ -11,9 +11,7 @@ import path from 'node:path';
 import { sha256, WINDOWS_X64_TARGET } from './r04-identity.mjs';
 import { emitNativePatch } from './r04-protocols.mjs';
 import { runR07OptimizationPipeline } from './r07-tsfg-dialect.mjs';
-
-const CLANG_CL = process.env.TSFG_CLANG_CL ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\llvm\\bin\\clang-cl.exe';
-const LLD_LINK = process.env.TSFG_LLD_LINK ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\llvm\\bin\\lld-link.exe';
+import { resolveClangClExe, resolveLldLinkExe } from './tsfg-paths.mjs';
 
 const RUNTIME_CALLBACK_STRUCT = `%struct.R07RtCallbacks = type {
   ptr, ; 0: fn(rt, type_id, scalars, edges) -> ptr (gc_alloc)
@@ -286,14 +284,22 @@ export async function compileTsfgPatchDll(dialectMod, outDir, opts = {}) {
 
   await writeFile(llPath, llvmIr, 'utf8');
 
+  const clangCl = resolveClangClExe(opts.clangCl);
+  const lldLink = resolveLldLinkExe(opts.lldLink);
   const optFlag = optLevel === 'O0' ? '/Od' : '/O2';
-  const cc = spawnSync(CLANG_CL, ['/c', optFlag, '-x', 'ir', llPath, `/Fo${objPath}`], {
+  const debugFlags = opts.emitPdb ? ['/Zi', `/Fd${path.join(outDir, `${tag}.compiler.pdb`)}`] : [];
+  const cc = spawnSync(clangCl, ['/c', optFlag, ...debugFlags, '-x', 'ir', llPath, `/Fo${objPath}`], {
     windowsHide: true,
     maxBuffer: 16 * 1024 * 1024,
   });
   if (cc.status !== 0) throw new Error(`r07 clang-cl failed:\n${cc.stderr.toString('utf8')}`);
 
-  const ld = spawnSync(LLD_LINK, ['/DLL', '/NOENTRY', '/MACHINE:X64', `/OUT:${dllPath}`, objPath], {
+  const pdbPath = path.join(outDir, `${tag}.pdb`);
+  const linkFlags = ['/DLL', '/NOENTRY', '/MACHINE:X64', `/OUT:${dllPath}`];
+  if (opts.emitPdb) {
+    linkFlags.push('/DEBUG:FULL', `/PDB:${pdbPath}`, '/PDBALTPATH:%_PDB%');
+  }
+  const ld = spawnSync(lldLink, [...linkFlags, objPath], {
     windowsHide: true,
     maxBuffer: 16 * 1024 * 1024,
   });

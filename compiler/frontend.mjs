@@ -1,8 +1,8 @@
+// SPDX-License-Identifier: MIT
 import { familyOf } from './module-callable-common.mjs';
 import {isProxy} from 'node:util/types';
 import {verifyCommonProgramFacts} from './common-program-facts.mjs';
 import { verifyModuleCallableSnapshot } from './module-callable-facts.mjs';
-// SPDX-License-Identifier: MIT
 import { canonical } from "./identity.mjs";
 import { validLocalPresence, validParameterPresence } from "./presence.mjs";
 import { localReferenceTarget, expressionLeaf, hasOnlyToken } from "./scalar-source.mjs";

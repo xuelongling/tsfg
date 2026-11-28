@@ -1,10 +1,10 @@
+// SPDX-License-Identifier: MIT
 import { familyOf } from './module-callable-common.mjs';
 import {verifyCommonProgramHir,buildCommonProgramHir,isCommonProgramContext} from './common-program-hir.mjs';
 import {verifyCommonKernelGroup} from './common-program-analysis.mjs';
 import {commonCheck,commonRecord,commonBudget,commonSame} from './common-program-common.mjs';
 import { verifyModuleCallableHir } from './module-callable-hir.mjs';
 import { verifyModuleCallablePublication } from './module-callable-publication.mjs';
-// SPDX-License-Identifier: MIT
 import { analyzeVerifiedModuleCalls, checkCallEffectsInputs, callEffectsFailure, verifyKernelHostSemantics } from './call-effects.mjs';
 export { KernelHostSemanticError } from './call-effects.mjs';
 import { verifyStringHir } from './string-hir-model.mjs';

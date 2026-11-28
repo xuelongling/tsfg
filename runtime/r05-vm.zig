@@ -15,6 +15,7 @@ pub const ValTag = bc.ValTag;
 pub const Op = bc.Op;
 
 pub const CANON_NAN_F64: u64 = 0x7ff8000000000000;
+pub const CANON_NAN_F32: u32 = 0x7fc00000;
 
 pub const TypedVal = struct {
     tag: ValTag = .@"undefined",
@@ -30,8 +31,20 @@ pub const TypedVal = struct {
     pub fn fromI32(v: i32) TypedVal {
         return .{ .tag = .i32, .payload = @as(u32, @bitCast(v)) };
     }
+    pub fn fromU32(v: u32) TypedVal {
+        return .{ .tag = .u32, .payload = v };
+    }
+    pub fn fromI64(v: i64) TypedVal {
+        return .{ .tag = .i64, .payload = @bitCast(v) };
+    }
+    pub fn fromU64(v: u64) TypedVal {
+        return .{ .tag = .u64, .payload = v };
+    }
     pub fn fromBool(v: bool) TypedVal {
         return .{ .tag = .bool, .payload = if (v) 1 else 0 };
+    }
+    pub fn fromF32Bits(bits: u32) TypedVal {
+        return .{ .tag = .f32, .payload = bits };
     }
     pub fn fromF64Bits(bits: u64) TypedVal {
         return .{ .tag = .f64, .payload = bits };
@@ -45,8 +58,84 @@ pub const TypedVal = struct {
     pub fn asI32(self: TypedVal) i32 {
         return @bitCast(@as(u32, @truncate(self.payload)));
     }
+    pub fn asU32(self: TypedVal) u32 {
+        return @truncate(self.payload);
+    }
+    pub fn asI64(self: TypedVal) i64 {
+        return switch (self.tag) {
+            .i64 => @bitCast(self.payload),
+            .u64 => @bitCast(self.payload),
+            .u32 => @intCast(self.asU32()),
+            else => @intCast(self.asI32()),
+        };
+    }
+    pub fn asF32(self: TypedVal) f32 {
+        return @bitCast(@as(u32, @truncate(self.payload)));
+    }
     pub fn asF64(self: TypedVal) f64 {
-        return @bitCast(self.payload);
+        return switch (self.tag) {
+            .f64 => @bitCast(self.payload),
+            .f32 => @floatCast(self.asF32()),
+            .i64 => @floatFromInt(self.asI64()),
+            .u64 => @floatFromInt(self.payload),
+            .u32 => @floatFromInt(self.asU32()),
+            else => @floatFromInt(self.asI32()),
+        };
+    }
+};
+
+pub const DebugBreakpoint = struct {
+    fn_idx: ?u32 = null,
+    pc: ?u32 = null,
+    source_offset: ?u32 = null,
+};
+
+pub const DebugLocalSnapshot = struct {
+    reg: u16,
+    tag: ValTag,
+    i32_val: i32,
+    payload: u64,
+};
+
+pub const DebugPauseEvent = struct {
+    fn_idx: u32,
+    pc: u32,
+    source_start: u32,
+    source_end: u32,
+    call_depth: u32,
+    call_stack_len: u8,
+    call_stack: [16]u32,
+    local_count: u8,
+    locals: [16]DebugLocalSnapshot,
+};
+
+pub const DebugHook = struct {
+    breakpoints: []const DebugBreakpoint = &.{},
+    step_all: bool = false,
+    max_events: usize = 64,
+    events: std.ArrayListUnmanaged(DebugPauseEvent) = .empty,
+
+    pub fn deinit(self: *DebugHook, allocator: std.mem.Allocator) void {
+        self.events.deinit(allocator);
+    }
+
+    fn matches(self: *const DebugHook, fn_idx: u32, pc: u32, span: bc.SourceSpan) bool {
+        if (self.step_all) return true;
+        for (self.breakpoints) |bp| {
+            if (bp.fn_idx) |bf| {
+                if (bf != fn_idx) continue;
+            }
+            if (bp.pc) |bpc| {
+                if (bpc == pc) return true;
+                continue;
+            }
+            if (bp.source_offset) |off| {
+                if (off >= span.start and off < @max(span.end, span.start + 1)) return true;
+                continue;
+            }
+            if (bp.fn_idx != null) return true;
+        }
+        return false;
     }
 };
 
@@ -57,6 +146,8 @@ pub const RequestLimits = struct {
     use_superinstructions: bool = true,
     /// Optional stress knob: trigger minor GC every N allocations/safepoints
     gc_stress_interval: u32 = 0,
+    /// Optional live VM debugger hook (breakpoints & step tracing)
+    debug_hook: ?*DebugHook = null,
 };
 
 pub const OutcomeStatus = enum(u8) {
@@ -117,7 +208,11 @@ const SpanRec = struct {
     live: bool = true,
 };
 
-const VmState = struct {
+/// Persistent VM Instance owning module globals, closures, arrays, spans, strings,
+/// and inline caches across multiple calls/frames. Registers a live GC HandleHook so
+/// every heap reference inside globals, closures, arrays, and active exceptions is
+/// traced and relocated across minor/major collections (zero UAF!).
+pub const VmInstance = struct {
     rt: *rt_mod.R06Runtime,
     mod: *const bc.VerifiedModule,
     caps: *rt_mod.CapabilityTable,
@@ -126,6 +221,8 @@ const VmState = struct {
     fuel_consumed: u64 = 0,
     phys_ops: u64 = 0,
     depth: u32 = 0,
+    call_stack_len: usize = 0,
+    call_stack: [64]u32 = [_]u32{0} ** 64,
     alloc_counter: u32 = 0,
     closures: std.ArrayListUnmanaged(ClosureRec) = .empty,
     arrays: std.ArrayListUnmanaged(ArrayRec) = .empty,
@@ -134,6 +231,7 @@ const VmState = struct {
     field_caches: [64]FieldInlineCache = [_]FieldInlineCache{.{}} ** 64,
     globals: []TypedVal,
     global_init: []bool,
+    hook_attached: bool = false,
 
     // Exception vs Trap state
     exc_active: bool = false,
@@ -141,7 +239,27 @@ const VmState = struct {
     failed: bool = false,
     fail_outcome: ExecutionOutcome = .{ .status = .ok },
 
-    fn init(rt: *rt_mod.R06Runtime, mod: *const bc.VerifiedModule, caps: *rt_mod.CapabilityTable, limits: RequestLimits) !VmState {
+    pub fn create(
+        rt: *rt_mod.R06Runtime,
+        mod: *const bc.VerifiedModule,
+        caps: *rt_mod.CapabilityTable,
+        limits: RequestLimits,
+    ) !*VmInstance {
+        const inst = try rt.allocator.create(VmInstance);
+        errdefer rt.allocator.destroy(inst);
+        inst.* = try init(rt, mod, caps, limits);
+        errdefer inst.deinitInternal();
+        try inst.attachGcRoots();
+        return inst;
+    }
+
+    pub fn destroy(self: *VmInstance) void {
+        const alloc = self.rt.allocator;
+        self.deinitInternal();
+        alloc.destroy(self);
+    }
+
+    fn init(rt: *rt_mod.R06Runtime, mod: *const bc.VerifiedModule, caps: *rt_mod.CapabilityTable, limits: RequestLimits) !VmInstance {
         const g = try rt.allocator.alloc(TypedVal, mod.global_count);
         errdefer rt.allocator.free(g);
         @memset(g, TypedVal.undef());
@@ -159,7 +277,48 @@ const VmState = struct {
         };
     }
 
-    fn deinit(self: *VmState) void {
+    fn attachGcRoots(self: *VmInstance) !void {
+        if (self.hook_attached) return;
+        try self.rt.gc.registerHandleHook(.{
+            .ctx = self,
+            .visit_fn = &visitVmRoots,
+        });
+        self.hook_attached = true;
+    }
+
+    fn visitVmRoots(ctx: *anyopaque, updater: *const fn (*gc_mod.GenGc, *?*gc_mod.GcObject) gc_mod.GcError!void, gc: *gc_mod.GenGc) gc_mod.GcError!void {
+        const self: *VmInstance = @ptrCast(@alignCast(ctx));
+        // 1. Module globals
+        for (self.globals) |*gv| {
+            if (gv.tag == .ref and gv.obj_ptr != null) {
+                try updater(gc, &gv.obj_ptr);
+            }
+        }
+        // 2. Closure captured environment objects
+        for (self.closures.items) |*cl| {
+            if (cl.env_obj != null) {
+                try updater(gc, &cl.env_obj);
+            }
+        }
+        // 3. Array elements holding heap references
+        for (self.arrays.items) |*arr| {
+            for (arr.items.items) |*elem| {
+                if (elem.tag == .ref and elem.obj_ptr != null) {
+                    try updater(gc, &elem.obj_ptr);
+                }
+            }
+        }
+        // 4. Active propagating exception object
+        if (self.exc_active and self.exc_val.tag == .ref and self.exc_val.obj_ptr != null) {
+            try updater(gc, &self.exc_val.obj_ptr);
+        }
+    }
+
+    fn deinitInternal(self: *VmInstance) void {
+        if (self.hook_attached) {
+            self.rt.gc.unregisterHandleHook(self);
+            self.hook_attached = false;
+        }
         for (self.arrays.items) |*a| a.items.deinit(self.rt.allocator);
         self.arrays.deinit(self.rt.allocator);
         self.spans.deinit(self.rt.allocator);
@@ -170,23 +329,85 @@ const VmState = struct {
         self.rt.allocator.free(self.global_init);
     }
 
-    fn allocString(self: *VmState, units: []const u16) !TypedVal {
+    pub fn resetRequestBudget(self: *VmInstance, limits: RequestLimits) void {
+        self.limits = limits;
+        self.fuel = limits.semantic_fuel;
+        self.fuel_consumed = 0;
+        self.phys_ops = 0;
+        self.depth = 0;
+        self.call_stack_len = 0;
+        self.exc_active = false;
+        self.exc_val = TypedVal.undef();
+        self.failed = false;
+        self.fail_outcome = .{ .status = .ok };
+    }
+
+    pub fn callFunction(
+        self: *VmInstance,
+        function_id: [32]u8,
+        arguments: []const TypedVal,
+        limits: RequestLimits,
+        out_str_utf8: ?*std.ArrayListUnmanaged(u8),
+    ) ExecutionOutcome {
+        const fn_idx = self.mod.findFunctionIndex(function_id) orelse {
+            return .{ .status = .invalid_request, .code = "r05-request-function", .fuel_remaining = limits.semantic_fuel };
+        };
+        if (arguments.len != self.mod.functions[fn_idx].param_count) {
+            return .{ .status = .invalid_request, .code = "r05-request-arity", .fuel_remaining = limits.semantic_fuel };
+        }
+        self.resetRequestBudget(limits);
+        const t0 = self.rt.trace.beginScope();
+        defer self.rt.trace.endScope(t0, "vm", "vm_call", @intCast(fn_idx));
+
+        const rv = self.execFunction(fn_idx, arguments);
+        if (self.failed) return self.fail_outcome;
+        if (self.exc_active) {
+            return .{
+                .status = .managed_exception,
+                .value = self.exc_val,
+                .code = "r01-e-uncaught",
+                .fuel_remaining = self.fuel,
+                .fuel_consumed = self.fuel_consumed,
+                .instructions_executed = self.phys_ops,
+            };
+        }
+        if (rv.tag == .string) {
+            if (out_str_utf8) |dst_buf| {
+                if (self.getString(rv)) |units| {
+                    const utf8 = std.unicode.utf16LeToUtf8Alloc(self.rt.allocator, units) catch null;
+                    if (utf8) |u8s| {
+                        defer self.rt.allocator.free(u8s);
+                        dst_buf.appendSlice(self.rt.allocator, u8s) catch {};
+                    }
+                }
+            }
+        }
+        return .{
+            .status = .ok,
+            .value = rv,
+            .fuel_remaining = self.fuel,
+            .fuel_consumed = self.fuel_consumed,
+            .instructions_executed = self.phys_ops,
+        };
+    }
+
+    fn allocString(self: *VmInstance, units: []const u16) !TypedVal {
         const copy = try self.rt.allocator.dupe(u16, units);
         errdefer self.rt.allocator.free(copy);
         try self.strings.append(self.rt.allocator, copy);
         return TypedVal.fromString(self.strings.items.len);
     }
 
-    fn getString(self: *const VmState, v: TypedVal) ?[]const u16 {
+    pub fn getString(self: *const VmInstance, v: TypedVal) ?[]const u16 {
         if (v.tag != .string or v.payload == 0 or v.payload > self.strings.items.len) return null;
         return self.strings.items[@intCast(v.payload - 1)];
     }
 
     fn asNumF64(v: TypedVal) f64 {
-        return if (v.tag == .f64) v.asF64() else @floatFromInt(v.asI32());
+        return v.asF64();
     }
 
-    fn setTrap(self: *VmState, code: []const u8, rule: []const u8, span: bc.SourceSpan) void {
+    fn setTrap(self: *VmInstance, code: []const u8, rule: []const u8, span: bc.SourceSpan) void {
         if (!self.failed) {
             self.failed = true;
             self.fail_outcome = .{
@@ -202,7 +423,7 @@ const VmState = struct {
         }
     }
 
-    fn setAbort(self: *VmState, code: []const u8, span: bc.SourceSpan) void {
+    fn setAbort(self: *VmInstance, code: []const u8, span: bc.SourceSpan) void {
         if (!self.failed) {
             self.failed = true;
             self.fail_outcome = .{
@@ -219,6 +440,11 @@ const VmState = struct {
 
     fn canonF64(v: f64) u64 {
         if (std.math.isNan(v)) return CANON_NAN_F64;
+        return @bitCast(v);
+    }
+
+    fn canonF32(v: f32) u32 {
+        if (std.math.isNan(v)) return CANON_NAN_F32;
         return @bitCast(v);
     }
 
@@ -240,7 +466,7 @@ const VmState = struct {
         }
     }
 
-    fn maybeGcSafepoint(self: *VmState, regs: []TypedVal, roots: []gc_mod.RootSlot, force: bool, span: bc.SourceSpan) void {
+    fn maybeGcSafepoint(self: *VmInstance, regs: []TypedVal, roots: []gc_mod.RootSlot, force: bool, span: bc.SourceSpan) void {
         self.alloc_counter += 1;
         const trigger = force or (self.limits.gc_stress_interval > 0 and (self.alloc_counter % self.limits.gc_stress_interval == 0));
         if (!trigger) return;
@@ -252,13 +478,53 @@ const VmState = struct {
         syncRegsFromRoots(regs, roots);
     }
 
-    fn execFunction(self: *VmState, fn_idx: u32, args: []const TypedVal) TypedVal {
+    fn recordDebugPause(self: *VmInstance, hook: *DebugHook, fn_idx: u32, pc: u32, span: bc.SourceSpan, regs: []const TypedVal) void {
+        if (hook.events.items.len >= hook.max_events) return;
+        var ev = DebugPauseEvent{
+            .fn_idx = fn_idx,
+            .pc = pc,
+            .source_start = span.start,
+            .source_end = span.end,
+            .call_depth = self.depth,
+            .call_stack_len = @intCast(@min(self.call_stack_len, 16)),
+            .call_stack = [_]u32{0} ** 16,
+            .local_count = 0,
+            .locals = undefined,
+        };
+        for (0..ev.call_stack_len) |ci| {
+            ev.call_stack[ci] = self.call_stack[ci];
+        }
+        var lcnt: u8 = 0;
+        for (regs, 0..) |r, ri| {
+            if (lcnt >= 16) break;
+            if (r.tag != .@"undefined") {
+                ev.locals[lcnt] = .{
+                    .reg = @intCast(ri),
+                    .tag = r.tag,
+                    .i32_val = r.asI32(),
+                    .payload = r.payload,
+                };
+                lcnt += 1;
+            }
+        }
+        ev.local_count = lcnt;
+        hook.events.append(self.rt.allocator, ev) catch {};
+    }
+
+    fn execFunction(self: *VmInstance, fn_idx: u32, args: []const TypedVal) TypedVal {
         const func = &self.mod.functions[fn_idx];
         const entry_span = func.cold_spans[0];
         if (self.depth >= self.limits.call_depth) {
             self.setTrap("r01-t-depth", "r01-depth", entry_span);
             return TypedVal.undef();
         }
+        if (self.call_stack_len < self.call_stack.len) {
+            self.call_stack[self.call_stack_len] = fn_idx;
+            self.call_stack_len += 1;
+        }
+        defer if (self.call_stack_len > 0) {
+            self.call_stack_len -= 1;
+        };
         self.depth += 1;
         defer self.depth -= 1;
 
@@ -290,6 +556,11 @@ const VmState = struct {
             if (self.failed) return TypedVal.undef();
             const ins = ops[pc];
             const span = func.cold_spans[ins.aux];
+            if (self.limits.debug_hook) |dbg| {
+                if (dbg.matches(fn_idx, @intCast(pc), span)) {
+                    self.recordDebugPause(dbg, fn_idx, @intCast(pc), span, regs);
+                }
+            }
             const phys_cost: u64 = if (ins.flags == 1) 2 else 1;
             if (self.phys_ops + phys_cost > self.limits.physical_instructions) {
                 self.setAbort("r05-execution-abort-budget", span);
@@ -441,6 +712,7 @@ const VmState = struct {
                     const r = regs[ins.b];
                     const eq = if (l.tag != r.tag) false else switch (l.tag) {
                         .@"undefined", .@"null" => true,
+                        .f32 => l.asF32() == r.asF32(),
                         .f64 => l.asF64() == r.asF64(),
                         .ref => if (l.obj_ptr != null and r.obj_ptr != null) l.obj_ptr.?.id == r.obj_ptr.?.id else l.payload == r.payload,
                         .string => blk: {
@@ -641,9 +913,22 @@ const VmState = struct {
                         return TypedVal.undef();
                     }
                     const rec = self.closures.items[@intCast(cl_val.payload - 1)];
-                    var call_args: [64]TypedVal = undefined;
-                    var n: usize = 0;
                     const expects_env = self.mod.functions[rec.fn_idx].param_count == ins.b + 1;
+                    const total_args: usize = @as(usize, ins.b) + (if (expects_env) @as(usize, 1) else 0);
+                    var stack_args: [64]TypedVal = undefined;
+                    var heap_args: ?[]TypedVal = null;
+                    defer if (heap_args) |ha| self.rt.allocator.free(ha);
+                    const call_args: []TypedVal = if (total_args <= stack_args.len)
+                        stack_args[0..total_args]
+                    else blk: {
+                        const ha = self.rt.allocator.alloc(TypedVal, total_args) catch {
+                            self.setAbort("r05-execution-abort-oom", span);
+                            return TypedVal.undef();
+                        };
+                        heap_args = ha;
+                        break :blk ha;
+                    };
+                    var n: usize = 0;
                     if (expects_env) {
                         if (rec.env_obj) |env| {
                             call_args[n] = TypedVal.fromObj(env);
@@ -1020,6 +1305,10 @@ const VmState = struct {
                         regs[ins.dst] = TypedVal.fromString(self.strings.items.len);
                     } else if (l.tag == .f64 or r.tag == .f64) {
                         regs[ins.dst] = TypedVal.fromF64Bits(canonF64(asNumF64(l) + asNumF64(r)));
+                    } else if (l.tag == .f32 or r.tag == .f32) {
+                        const fa: f32 = if (l.tag == .f32) l.asF32() else @floatFromInt(l.asI32());
+                        const fb: f32 = if (r.tag == .f32) r.asF32() else @floatFromInt(r.asI32());
+                        regs[ins.dst] = TypedVal.fromF32Bits(canonF32(fa + fb));
                     } else {
                         regs[ins.dst] = TypedVal.fromI32(l.asI32() +% r.asI32());
                     }
@@ -1030,6 +1319,10 @@ const VmState = struct {
                     const r = regs[ins.b];
                     if (l.tag == .f64 or r.tag == .f64) {
                         regs[ins.dst] = TypedVal.fromF64Bits(canonF64(asNumF64(l) - asNumF64(r)));
+                    } else if (l.tag == .f32 or r.tag == .f32) {
+                        const fa: f32 = if (l.tag == .f32) l.asF32() else @floatFromInt(l.asI32());
+                        const fb: f32 = if (r.tag == .f32) r.asF32() else @floatFromInt(r.asI32());
+                        regs[ins.dst] = TypedVal.fromF32Bits(canonF32(fa - fb));
                     } else {
                         regs[ins.dst] = TypedVal.fromI32(l.asI32() -% r.asI32());
                     }
@@ -1040,6 +1333,10 @@ const VmState = struct {
                     const r = regs[ins.b];
                     if (l.tag == .f64 or r.tag == .f64) {
                         regs[ins.dst] = TypedVal.fromF64Bits(canonF64(asNumF64(l) * asNumF64(r)));
+                    } else if (l.tag == .f32 or r.tag == .f32) {
+                        const fa: f32 = if (l.tag == .f32) l.asF32() else @floatFromInt(l.asI32());
+                        const fb: f32 = if (r.tag == .f32) r.asF32() else @floatFromInt(r.asI32());
+                        regs[ins.dst] = TypedVal.fromF32Bits(canonF32(fa * fb));
                     } else {
                         regs[ins.dst] = TypedVal.fromI32(l.asI32() *% r.asI32());
                     }
@@ -1050,6 +1347,10 @@ const VmState = struct {
                     const r = regs[ins.b];
                     if (l.tag == .f64 or r.tag == .f64) {
                         regs[ins.dst] = TypedVal.fromF64Bits(canonF64(asNumF64(l) / asNumF64(r)));
+                    } else if (l.tag == .f32 or r.tag == .f32) {
+                        const fa: f32 = if (l.tag == .f32) l.asF32() else @floatFromInt(l.asI32());
+                        const fb: f32 = if (r.tag == .f32) r.asF32() else @floatFromInt(r.asI32());
+                        regs[ins.dst] = TypedVal.fromF32Bits(canonF32(fa / fb));
                     } else {
                         const a = l.asI32();
                         const b = r.asI32();
@@ -1064,34 +1365,158 @@ const VmState = struct {
                 .lt_dyn => {
                     const l = regs[ins.a];
                     const r = regs[ins.b];
-                    regs[ins.dst] = TypedVal.fromBool(if (l.tag == .f64 or r.tag == .f64) asNumF64(l) < asNumF64(r) else l.asI32() < r.asI32());
+                    const res = if (l.tag == .f64 or r.tag == .f64) asNumF64(l) < asNumF64(r) else if (l.tag == .f32 or r.tag == .f32) (if (l.tag == .f32) l.asF32() else @as(f32, @floatFromInt(l.asI32()))) < (if (r.tag == .f32) r.asF32() else @as(f32, @floatFromInt(r.asI32()))) else l.asI32() < r.asI32();
+                    regs[ins.dst] = TypedVal.fromBool(res);
                     pc += 1;
                 },
                 .le_dyn => {
                     const l = regs[ins.a];
                     const r = regs[ins.b];
-                    regs[ins.dst] = TypedVal.fromBool(if (l.tag == .f64 or r.tag == .f64) asNumF64(l) <= asNumF64(r) else l.asI32() <= r.asI32());
+                    const res = if (l.tag == .f64 or r.tag == .f64) asNumF64(l) <= asNumF64(r) else if (l.tag == .f32 or r.tag == .f32) (if (l.tag == .f32) l.asF32() else @as(f32, @floatFromInt(l.asI32()))) <= (if (r.tag == .f32) r.asF32() else @as(f32, @floatFromInt(r.asI32()))) else l.asI32() <= r.asI32();
+                    regs[ins.dst] = TypedVal.fromBool(res);
                     pc += 1;
                 },
                 .gt_dyn => {
                     const l = regs[ins.a];
                     const r = regs[ins.b];
-                    regs[ins.dst] = TypedVal.fromBool(if (l.tag == .f64 or r.tag == .f64) asNumF64(l) > asNumF64(r) else l.asI32() > r.asI32());
+                    const res = if (l.tag == .f64 or r.tag == .f64) asNumF64(l) > asNumF64(r) else if (l.tag == .f32 or r.tag == .f32) (if (l.tag == .f32) l.asF32() else @as(f32, @floatFromInt(l.asI32()))) > (if (r.tag == .f32) r.asF32() else @as(f32, @floatFromInt(r.asI32()))) else l.asI32() > r.asI32();
+                    regs[ins.dst] = TypedVal.fromBool(res);
                     pc += 1;
                 },
                 .ge_dyn => {
                     const l = regs[ins.a];
                     const r = regs[ins.b];
-                    regs[ins.dst] = TypedVal.fromBool(if (l.tag == .f64 or r.tag == .f64) asNumF64(l) >= asNumF64(r) else l.asI32() >= r.asI32());
+                    const res = if (l.tag == .f64 or r.tag == .f64) asNumF64(l) >= asNumF64(r) else if (l.tag == .f32 or r.tag == .f32) (if (l.tag == .f32) l.asF32() else @as(f32, @floatFromInt(l.asI32()))) >= (if (r.tag == .f32) r.asF32() else @as(f32, @floatFromInt(r.asI32()))) else l.asI32() >= r.asI32();
+                    regs[ins.dst] = TypedVal.fromBool(res);
                     pc += 1;
                 },
                 .neg_dyn => {
                     const v = regs[ins.a];
                     if (v.tag == .f64) {
                         regs[ins.dst] = TypedVal.fromF64Bits(canonF64(-v.asF64()));
+                    } else if (v.tag == .f32) {
+                        regs[ins.dst] = TypedVal.fromF32Bits(canonF32(-v.asF32()));
+                    } else if (v.tag == .i64) {
+                        regs[ins.dst] = TypedVal.fromI64(0 -% v.asI64());
                     } else {
                         regs[ins.dst] = TypedVal.fromI32(0 -% v.asI32());
                     }
+                    pc += 1;
+                },
+                .const_i64 => {
+                    regs[ins.dst] = TypedVal.fromI64(@bitCast(self.mod.const_pool_f64[@intCast(ins.imm32)]));
+                    pc += 1;
+                },
+                .const_u32 => {
+                    regs[ins.dst] = TypedVal.fromU32(@bitCast(ins.imm32));
+                    pc += 1;
+                },
+                .const_u64 => {
+                    regs[ins.dst] = TypedVal.fromU64(self.mod.const_pool_f64[@intCast(ins.imm32)]);
+                    pc += 1;
+                },
+                .const_f32 => {
+                    regs[ins.dst] = TypedVal.fromF32Bits(@bitCast(ins.imm32));
+                    pc += 1;
+                },
+                .add_i64 => {
+                    regs[ins.dst] = TypedVal.fromI64(regs[ins.a].asI64() +% regs[ins.b].asI64());
+                    pc += 1;
+                },
+                .sub_i64 => {
+                    regs[ins.dst] = TypedVal.fromI64(regs[ins.a].asI64() -% regs[ins.b].asI64());
+                    pc += 1;
+                },
+                .mul_i64 => {
+                    regs[ins.dst] = TypedVal.fromI64(regs[ins.a].asI64() *% regs[ins.b].asI64());
+                    pc += 1;
+                },
+                .div_i64 => {
+                    const a = regs[ins.a].asI64();
+                    const b = regs[ins.b].asI64();
+                    if (b == 0 or (a == std.math.minInt(i64) and b == -1)) {
+                        self.setTrap("r01-t-div-zero", "r01-i64-div", span);
+                        return TypedVal.undef();
+                    }
+                    regs[ins.dst] = TypedVal.fromI64(@divTrunc(a, b));
+                    pc += 1;
+                },
+                .rem_i64 => {
+                    const a = regs[ins.a].asI64();
+                    const b = regs[ins.b].asI64();
+                    if (b == 0) {
+                        self.setTrap("r01-t-div-zero", "r01-i64-rem", span);
+                        return TypedVal.undef();
+                    }
+                    const res: i64 = if (a == std.math.minInt(i64) and b == -1) 0 else @rem(a, b);
+                    regs[ins.dst] = TypedVal.fromI64(res);
+                    pc += 1;
+                },
+                .lt_i64 => {
+                    regs[ins.dst] = TypedVal.fromBool(regs[ins.a].asI64() < regs[ins.b].asI64());
+                    pc += 1;
+                },
+                .le_i64 => {
+                    regs[ins.dst] = TypedVal.fromBool(regs[ins.a].asI64() <= regs[ins.b].asI64());
+                    pc += 1;
+                },
+                .gt_i64 => {
+                    regs[ins.dst] = TypedVal.fromBool(regs[ins.a].asI64() > regs[ins.b].asI64());
+                    pc += 1;
+                },
+                .ge_i64 => {
+                    regs[ins.dst] = TypedVal.fromBool(regs[ins.a].asI64() >= regs[ins.b].asI64());
+                    pc += 1;
+                },
+                .div_u32 => {
+                    const b = regs[ins.b].asU32();
+                    if (b == 0) {
+                        self.setTrap("r01-t-div-zero", "r01-u32-div", span);
+                        return TypedVal.undef();
+                    }
+                    regs[ins.dst] = TypedVal.fromU32(regs[ins.a].asU32() / b);
+                    pc += 1;
+                },
+                .rem_u32 => {
+                    const b = regs[ins.b].asU32();
+                    if (b == 0) {
+                        self.setTrap("r01-t-div-zero", "r01-u32-rem", span);
+                        return TypedVal.undef();
+                    }
+                    regs[ins.dst] = TypedVal.fromU32(regs[ins.a].asU32() % b);
+                    pc += 1;
+                },
+                .lt_u32 => {
+                    regs[ins.dst] = TypedVal.fromBool(regs[ins.a].asU32() < regs[ins.b].asU32());
+                    pc += 1;
+                },
+                .le_u32 => {
+                    regs[ins.dst] = TypedVal.fromBool(regs[ins.a].asU32() <= regs[ins.b].asU32());
+                    pc += 1;
+                },
+                .gt_u32 => {
+                    regs[ins.dst] = TypedVal.fromBool(regs[ins.a].asU32() > regs[ins.b].asU32());
+                    pc += 1;
+                },
+                .ge_u32 => {
+                    regs[ins.dst] = TypedVal.fromBool(regs[ins.a].asU32() >= regs[ins.b].asU32());
+                    pc += 1;
+                },
+                .f32_round => {
+                    const f: f32 = @floatCast(regs[ins.a].asF64());
+                    regs[ins.dst] = TypedVal.fromF32Bits(canonF32(f));
+                    pc += 1;
+                },
+                .int_wrap => {
+                    const raw: u64 = regs[ins.a].payload;
+                    regs[ins.dst] = switch (ins.imm32) {
+                        8 => TypedVal.fromI32(@as(i32, @as(i8, @bitCast(@as(u8, @truncate(raw)))))),
+                        -8 => TypedVal.fromU32(@as(u32, @as(u8, @truncate(raw)))),
+                        16 => TypedVal.fromI32(@as(i32, @as(i16, @bitCast(@as(u16, @truncate(raw)))))),
+                        -16 => TypedVal.fromU32(@as(u32, @as(u16, @truncate(raw)))),
+                        -32 => TypedVal.fromU32(@as(u32, @truncate(raw))),
+                        else => TypedVal.fromI32(@bitCast(@as(u32, @truncate(raw)))),
+                    };
                     pc += 1;
                 },
             }
@@ -1100,7 +1525,7 @@ const VmState = struct {
         return TypedVal.undef();
     }
 
-    fn findExceptionHandler(self: *VmState, func: *const bc.VerifiedFunction, pc: usize) ?usize {
+    fn findExceptionHandler(self: *VmInstance, func: *const bc.VerifiedFunction, pc: usize) ?usize {
         _ = self;
         const pc32: u32 = @intCast(pc);
         for (func.handlers) |h| {
@@ -1110,15 +1535,12 @@ const VmState = struct {
     }
 };
 
-/// Sole Public R05 Execution Interface:
-/// `verified module + FunctionId + typed argument frame + capability table + limits`.
-/// NEVER accepts unverified bytecode; NEVER lets managed exceptions escape across ABI.
-/// Execute an optional module initializer (`$moduleInit`) followed by `function_id`
-/// on shared module globals & GC heap, optionally exporting any string return value to UTF-8.
-pub fn eval_bytecode_with_init(
+/// Execute zero or more module initializers in topological order followed by `function_id`
+/// on a GC-rooted `VmInstance`.
+pub fn eval_bytecode_with_inits(
     rt: *rt_mod.R06Runtime,
     mod: *const bc.VerifiedModule,
-    init_function_id: ?[32]u8,
+    init_function_ids: []const [32]u8,
     function_id: [32]u8,
     arguments: []const TypedVal,
     capabilities: *rt_mod.CapabilityTable,
@@ -1132,43 +1554,46 @@ pub fn eval_bytecode_with_init(
         return .{ .status = .invalid_request, .code = "r05-request-arity", .fuel_remaining = limits.semantic_fuel };
     }
 
-    var state = VmState.init(rt, mod, capabilities, limits) catch {
+    const inst = VmInstance.create(rt, mod, capabilities, limits) catch {
         return .{ .status = .execution_abort, .code = "r05-execution-abort-oom", .fuel_remaining = limits.semantic_fuel };
     };
-    defer state.deinit();
+    defer inst.destroy();
 
-    if (init_function_id) |init_id| {
+    for (init_function_ids) |init_id| {
         if (mod.findFunctionIndex(init_id)) |init_idx| {
-            _ = state.execFunction(init_idx, &.{});
-            if (state.failed) return state.fail_outcome;
-            if (state.exc_active) {
+            _ = inst.execFunction(init_idx, &.{});
+            if (inst.failed) return inst.fail_outcome;
+            if (inst.exc_active) {
                 return .{
                     .status = .managed_exception,
-                    .value = state.exc_val,
+                    .value = inst.exc_val,
                     .code = "r01-e-uncaught",
-                    .fuel_remaining = state.fuel,
-                    .fuel_consumed = state.fuel_consumed,
-                    .instructions_executed = state.phys_ops,
+                    .fuel_remaining = inst.fuel,
+                    .fuel_consumed = inst.fuel_consumed,
+                    .instructions_executed = inst.phys_ops,
                 };
             }
         }
     }
 
-    const rv = state.execFunction(fn_idx, arguments);
-    if (state.failed) return state.fail_outcome;
-    if (state.exc_active) {
+    const t0 = rt.trace.beginScope();
+    defer rt.trace.endScope(t0, "vm", "eval_bytecode", @intCast(fn_idx));
+
+    const rv = inst.execFunction(fn_idx, arguments);
+    if (inst.failed) return inst.fail_outcome;
+    if (inst.exc_active) {
         return .{
             .status = .managed_exception,
-            .value = state.exc_val,
+            .value = inst.exc_val,
             .code = "r01-e-uncaught",
-            .fuel_remaining = state.fuel,
-            .fuel_consumed = state.fuel_consumed,
-            .instructions_executed = state.phys_ops,
+            .fuel_remaining = inst.fuel,
+            .fuel_consumed = inst.fuel_consumed,
+            .instructions_executed = inst.phys_ops,
         };
     }
     if (rv.tag == .string) {
         if (out_str_utf8) |dst_buf| {
-            if (state.getString(rv)) |units| {
+            if (inst.getString(rv)) |units| {
                 const utf8 = std.unicode.utf16LeToUtf8Alloc(rt.allocator, units) catch null;
                 if (utf8) |u8s| {
                     defer rt.allocator.free(u8s);
@@ -1180,10 +1605,27 @@ pub fn eval_bytecode_with_init(
     return .{
         .status = .ok,
         .value = rv,
-        .fuel_remaining = state.fuel,
-        .fuel_consumed = state.fuel_consumed,
-        .instructions_executed = state.phys_ops,
+        .fuel_remaining = inst.fuel,
+        .fuel_consumed = inst.fuel_consumed,
+        .instructions_executed = inst.phys_ops,
     };
+}
+
+pub fn eval_bytecode_with_init(
+    rt: *rt_mod.R06Runtime,
+    mod: *const bc.VerifiedModule,
+    init_function_id: ?[32]u8,
+    function_id: [32]u8,
+    arguments: []const TypedVal,
+    capabilities: *rt_mod.CapabilityTable,
+    limits: RequestLimits,
+    out_str_utf8: ?*std.ArrayListUnmanaged(u8),
+) ExecutionOutcome {
+    if (init_function_id) |id| {
+        const ids = [_][32]u8{id};
+        return eval_bytecode_with_inits(rt, mod, &ids, function_id, arguments, capabilities, limits, out_str_utf8);
+    }
+    return eval_bytecode_with_inits(rt, mod, &.{}, function_id, arguments, capabilities, limits, out_str_utf8);
 }
 
 pub fn eval_bytecode(
@@ -1194,11 +1636,11 @@ pub fn eval_bytecode(
     capabilities: *rt_mod.CapabilityTable,
     limits: RequestLimits,
 ) ExecutionOutcome {
-    return eval_bytecode_with_init(rt, mod, null, function_id, arguments, capabilities, limits, null);
+    return eval_bytecode_with_inits(rt, mod, &.{}, function_id, arguments, capabilities, limits, null);
 }
 
 // ============================================================================
-// Cross-Tier Bridge (Native -> VM with ABI Exception Isolation & Root Safety)
+// Bidirectional Cross-Tier Bridge (Native <-> VM with ABI Exception Isolation)
 // ============================================================================
 pub const TierBridgeContext = struct {
     rt: *rt_mod.R06Runtime,
@@ -1207,21 +1649,31 @@ pub const TierBridgeContext = struct {
     limits: RequestLimits,
 };
 
-/// Native-callable C-ABI trampoline invoking a verified VM function by `FunctionId`.
-/// Catches ALL managed exceptions & traps into `rt_mod.BoundaryResult` so NO managed
-/// exception ever crosses the Zig/C ABI boundary!
-pub fn invokeVmFromNative(
+pub const NativeCallBridge = struct {
+    ctx: *anyopaque,
+    invoke_fn: *const fn (ctx: *anyopaque, args: []const TypedVal) rt_mod.BoundaryResult,
+};
+
+/// VM -> Native bridge: invokes a registered native callback with typed arguments and
+/// returns a structured `BoundaryResult` (never allowing native errors to corrupt VM state).
+pub fn callNativeFromVm(bridge: *const NativeCallBridge, args: []const TypedVal) rt_mod.BoundaryResult {
+    return bridge.invoke_fn(bridge.ctx, args);
+}
+
+/// Generalized Native -> VM bridge supporting arbitrary argument counts & scalar/ref types.
+pub fn invokeVmFromNativeArgs(
     ctx: *const TierBridgeContext,
     function_id: [32]u8,
-    arg0: i32,
-    arg1: i32,
+    args: []const TypedVal,
 ) rt_mod.BoundaryResult {
-    const args = [_]TypedVal{ TypedVal.fromI32(arg0), TypedVal.fromI32(arg1) };
     const fn_idx = ctx.mod.findFunctionIndex(function_id) orelse {
         return .{ .status = .trap, .code = "r05-request-function" };
     };
-    const count = @min(ctx.mod.functions[fn_idx].param_count, 2);
-    const out = eval_bytecode(ctx.rt, ctx.mod, function_id, args[0..count], ctx.caps, ctx.limits);
+    const expected = ctx.mod.functions[fn_idx].param_count;
+    if (args.len < expected) {
+        return .{ .status = .trap, .code = "r05-request-arity" };
+    }
+    const out = eval_bytecode(ctx.rt, ctx.mod, function_id, args[0..expected], ctx.caps, ctx.limits);
     return switch (out.status) {
         .ok => .{
             .status = .ok,
@@ -1251,4 +1703,19 @@ pub fn invokeVmFromNative(
             .fuel_remaining = out.fuel_remaining,
         },
     };
+}
+
+/// Native-callable C-ABI trampoline invoking a verified VM function by `FunctionId`.
+pub fn invokeVmFromNative(
+    ctx: *const TierBridgeContext,
+    function_id: [32]u8,
+    arg0: i32,
+    arg1: i32,
+) rt_mod.BoundaryResult {
+    const args = [_]TypedVal{ TypedVal.fromI32(arg0), TypedVal.fromI32(arg1) };
+    const fn_idx = ctx.mod.findFunctionIndex(function_id) orelse {
+        return .{ .status = .trap, .code = "r05-request-function" };
+    };
+    const count = @min(ctx.mod.functions[fn_idx].param_count, 2);
+    return invokeVmFromNativeArgs(ctx, function_id, args[0..count]);
 }

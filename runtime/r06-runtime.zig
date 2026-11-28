@@ -9,6 +9,7 @@
 const std = @import("std");
 const r04_id = @import("r04-identity.zig");
 const gc_mod = @import("r06-gen-gc.zig");
+const profiler = @import("tsfg-profiler.zig");
 
 pub const ResourceHandle = r04_id.ResourceHandle;
 pub const GenGc = gc_mod.GenGc;
@@ -316,6 +317,7 @@ pub const R06Runtime = struct {
     arena: ValueArena,
     capabilities: CapabilityTable,
     modules: ModuleRegistry,
+    trace: profiler.TraceRecorder,
 
     pub fn create(allocator: std.mem.Allocator, max_heap_bytes: usize, arena_bytes: usize) RuntimeError!*R06Runtime {
         const rt = allocator.create(R06Runtime) catch return error.OutOfMemory;
@@ -327,22 +329,27 @@ pub const R06Runtime = struct {
             .arena = try ValueArena.init(allocator, arena_bytes),
             .capabilities = CapabilityTable.init(allocator),
             .modules = ModuleRegistry.init(allocator),
+            .trace = profiler.TraceRecorder.init(allocator, false),
         };
         errdefer rt.gc.deinit();
         errdefer rt.handles.deinit();
         errdefer rt.arena.deinit();
         errdefer rt.capabilities.deinit();
         errdefer rt.modules.deinit();
+        errdefer rt.trace.deinit();
+        rt.gc.trace_recorder = &rt.trace;
         try rt.handles.attachToGc(&rt.gc);
         return rt;
     }
 
     pub fn destroy(self: *R06Runtime) void {
+        self.gc.trace_recorder = null;
         self.modules.deinit();
         self.capabilities.deinit();
         self.arena.deinit();
         self.handles.deinit();
         self.gc.deinit();
+        self.trace.deinit();
         self.allocator.destroy(self);
     }
 

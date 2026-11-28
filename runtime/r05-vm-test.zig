@@ -369,3 +369,110 @@ test "R05 VM v2 Lossless UTF-16 Strings (const_str, concat, slice, charCodeAt, l
     try std.testing.expectEqual(vm.OutcomeStatus.ok, out.status);
     try std.testing.expectEqual(@as(i32, 0xD800 + 6 + 1), out.value.asI32());
 }
+
+test "R05 VM: fixed-width i64/u32/f32 opcodes, DebugHook breakpoints, and bidirectional Native<->VM bridge" {
+    const alloc = std.testing.allocator;
+    const rt = try rt_mod.R06Runtime.create(alloc, 1024 * 1024, 4096);
+    defer rt.destroy();
+
+    // fn 0: compute (10_000_000_000i64 + 2_000_000_000i64) / 3 = 4_000_000_000i64
+    const i64_ops = [_]bc.RawOpSpec{
+        .{ .op = .fuel, .a = 1, .start = 0, .end = 5 },
+        .{ .op = .const_i64, .dst = 0, .imm32 = 0, .start = 5, .end = 10 },
+        .{ .op = .const_i64, .dst = 1, .imm32 = 1, .start = 10, .end = 15 },
+        .{ .op = .add_i64, .dst = 2, .a = 0, .b = 1, .start = 15, .end = 20 },
+        .{ .op = .const_i64, .dst = 3, .imm32 = 2, .start = 20, .end = 25 },
+        .{ .op = .div_i64, .dst = 4, .a = 2, .b = 3, .start = 25, .end = 30 },
+        .{ .op = .ret, .a = 4, .start = 30, .end = 35 },
+    };
+
+    // fn 1: u32 division 0xF0000000u / 2 = 0x78000000u (proves unsigned division, not signed!)
+    const u32_ops = [_]bc.RawOpSpec{
+        .{ .op = .fuel, .a = 1, .start = 0, .end = 5 },
+        .{ .op = .const_u32, .dst = 0, .imm32 = @bitCast(@as(u32, 0xF0000000)), .start = 5, .end = 10 },
+        .{ .op = .const_u32, .dst = 1, .imm32 = 2, .start = 10, .end = 15 },
+        .{ .op = .div_u32, .dst = 2, .a = 0, .b = 1, .start = 15, .end = 20 },
+        .{ .op = .ret, .a = 2, .start = 20, .end = 25 },
+    };
+
+    // fn 2: f32 constant 1.5f + 2.25f rounded to f32 = 3.75f
+    const f32_1_5: i32 = @bitCast(@as(f32, 1.5));
+    const f32_2_25: i32 = @bitCast(@as(f32, 2.25));
+    const f32_ops = [_]bc.RawOpSpec{
+        .{ .op = .fuel, .a = 1, .start = 0, .end = 5 },
+        .{ .op = .const_f32, .dst = 0, .imm32 = f32_1_5, .start = 5, .end = 10 },
+        .{ .op = .const_f32, .dst = 1, .imm32 = f32_2_25, .start = 10, .end = 15 },
+        .{ .op = .add_dyn, .dst = 2, .a = 0, .b = 1, .start = 15, .end = 20 },
+        .{ .op = .f32_round, .dst = 3, .a = 2, .start = 20, .end = 25 },
+        .{ .op = .ret, .a = 3, .start = 25, .end = 30 },
+    };
+
+    const bytes = try bc.encodeModule(alloc, .{
+        .module_id = MOD_ID,
+        .abi_hash = ABI_HASH,
+        .static_schema_hash = SCHEMA_HASH,
+        .const_pool_f64 = &.{
+            @bitCast(@as(i64, 10_000_000_000)),
+            @bitCast(@as(i64, 2_000_000_000)),
+            @bitCast(@as(i64, 3)),
+        },
+        .functions = &.{
+            .{ .function_id = makeFnId(50), .param_count = 0, .reg_count = 6, .ops = &i64_ops },
+            .{ .function_id = makeFnId(51), .param_count = 0, .reg_count = 4, .ops = &u32_ops },
+            .{ .function_id = makeFnId(52), .param_count = 0, .reg_count = 5, .ops = &f32_ops },
+        },
+    });
+    defer alloc.free(bytes);
+
+    var mod = try bc.verifyAndPredecode(alloc, bytes, ABI_HASH);
+    defer mod.deinit();
+
+    // 1. i64 exact 64-bit arithmetic
+    const r_i64 = vm.eval_bytecode(rt, &mod, makeFnId(50), &.{}, &rt.capabilities, .{});
+    try std.testing.expectEqual(vm.OutcomeStatus.ok, r_i64.status);
+    try std.testing.expectEqual(bc.ValTag.i64, r_i64.value.tag);
+    try std.testing.expectEqual(@as(i64, 4_000_000_000), r_i64.value.asI64());
+
+    // 2. u32 exact unsigned division
+    const r_u32 = vm.eval_bytecode(rt, &mod, makeFnId(51), &.{}, &rt.capabilities, .{});
+    try std.testing.expectEqual(vm.OutcomeStatus.ok, r_u32.status);
+    try std.testing.expectEqual(bc.ValTag.u32, r_u32.value.tag);
+    try std.testing.expectEqual(@as(u32, 0x78000000), r_u32.value.asU32());
+
+    // 3. f32 exact single-precision arithmetic
+    const r_f32 = vm.eval_bytecode(rt, &mod, makeFnId(52), &.{}, &rt.capabilities, .{});
+    try std.testing.expectEqual(vm.OutcomeStatus.ok, r_f32.status);
+    try std.testing.expectEqual(bc.ValTag.f32, r_f32.value.tag);
+    try std.testing.expectEqual(@as(f32, 3.75), r_f32.value.asF32());
+
+    // 4. Live DebugHook breakpoint pause at pc 3
+    const bps = [_]vm.DebugBreakpoint{.{ .fn_idx = 0, .pc = 3 }};
+    var hook = vm.DebugHook{ .breakpoints = &bps };
+    defer hook.deinit(alloc);
+    const r_dbg = vm.eval_bytecode(rt, &mod, makeFnId(50), &.{}, &rt.capabilities, .{ .debug_hook = &hook });
+    try std.testing.expectEqual(vm.OutcomeStatus.ok, r_dbg.status);
+    try std.testing.expectEqual(@as(usize, 1), hook.events.items.len);
+    try std.testing.expectEqual(@as(u32, 3), hook.events.items[0].pc);
+    try std.testing.expect(hook.events.items[0].local_count >= 1);
+    try std.testing.expectEqual(@as(i64, 10_000_000_000), @as(i64, @bitCast(hook.events.items[0].locals[0].payload)));
+
+    // 5. Bidirectional Native -> VM (multi-arg) & VM -> Native (capability) bridges
+    const bridge = vm.TierBridgeContext{ .rt = rt, .mod = &mod, .caps = &rt.capabilities, .limits = .{} };
+    const br_u32 = vm.invokeVmFromNativeArgs(&bridge, makeFnId(51), &.{});
+    try std.testing.expectEqual(rt_mod.BoundaryStatus.ok, br_u32.status);
+    try std.testing.expectEqual(@as(u64, 0x78000000), br_u32.value_payload);
+
+    var dummy: u8 = 0;
+    const nat_bridge = vm.NativeCallBridge{
+        .ctx = &dummy,
+        .invoke_fn = struct {
+            fn f(_: *anyopaque, args: []const vm.TypedVal) rt_mod.BoundaryResult {
+                const prod = args[0].asI64() * args[1].asI64();
+                return .{ .status = .ok, .value_tag = @intFromEnum(bc.ValTag.i64), .value_payload = @bitCast(prod) };
+            }
+        }.f,
+    };
+    const vm_to_nat = vm.callNativeFromVm(&nat_bridge, &.{ vm.TypedVal.fromI64(6), vm.TypedVal.fromI64(7) });
+    try std.testing.expectEqual(rt_mod.BoundaryStatus.ok, vm_to_nat.status);
+    try std.testing.expectEqual(@as(i64, 42), @as(i64, @bitCast(vm_to_nat.value_payload)));
+}

@@ -11,6 +11,9 @@
   "scripts": {
     "test:core-metadata": "node --test tests/r03/common-program-metadata-models.test.mjs",
     "test": "node --experimental-test-module-mocks --test tests/r00/*.test.mjs tests/r01/*.test.mjs",
+    "test:r04-r13": "node --test tests/r04/*.test.mjs tests/r05/*.test.mjs tests/r07/*.test.mjs tests/r08/*.test.mjs tests/r09/*.test.mjs tests/r10/*.test.mjs tests/r11/*.test.mjs tests/r12/*.test.mjs tests/r13/*.test.mjs",
+    "test:all": "node --experimental-test-module-mocks --test tests/r00/*.test.mjs tests/r01/*.test.mjs tests/r04/*.test.mjs tests/r05/*.test.mjs tests/r07/*.test.mjs tests/r08/*.test.mjs tests/r09/*.test.mjs tests/r10/*.test.mjs tests/r11/*.test.mjs tests/r12/*.test.mjs tests/r13/*.test.mjs",
+    "sdk:windows": "node eng/build-windows-sdk.mjs --zip",
     "typecheck": "tsc --noEmit",
     "verify": "tsc --noEmit && node --experimental-test-module-mocks --test tests/r00/*.test.mjs tests/r01/*.test.mjs"
   },

@@ -15,11 +15,12 @@ import {
   validateCompilerServiceMessage,
 } from '../../compiler/r04-protocols.mjs';
 import { compileTsfgPatchDll } from '../../compiler/r07-aot-backend.mjs';
+import { resolveTempDir } from '../../compiler/tsfg-paths.mjs';
 import { encodeDialectToR05Bytecode } from '../diff-platform/r08-generator.mjs';
 
 export class R09CompilerService {
   constructor(opts = {}) {
-    this.workRoot = opts.workRoot ?? 'E:\\tsfg-temp\\r09-service';
+    this.workRoot = opts.workRoot ?? resolveTempDir('r09-service');
     this.abiHash = opts.abiHash ?? sha256(Buffer.from('r09-service-abi-v1'));
     this.publishedContracts = new Map(); // functionId -> { signatureHash, effectHash, captureLayoutHash, staticSchemaHash, codeVersion }
     this.irCache = new Map(); // irDigest -> compiled artifact entry
@@ -246,24 +247,32 @@ export class R09CompilerService {
   }
 
   async #compileModuleReload(req, extra) {
-    const { moduleId, fromEpoch, toEpoch, oldSchemaHash, newSchemaHash, migrationHook } = extra;
+    const previousSchemaHash = extra.previousSchemaHash ?? extra.oldSchemaHash;
+    const nextSchemaHash = extra.nextSchemaHash ?? extra.newSchemaHash;
+    const hookFnId = extra.migrationHookFunctionId ?? (
+      typeof extra.migrationHook === 'string' && /^sha256:[0-9a-f]{64}$/.test(extra.migrationHook)
+        ? extra.migrationHook
+        : sha256(Buffer.from(`migration-hook:${extra.migrationHook ?? 'default'}`))
+    );
     const tx = emitModuleReload({
-      moduleId,
-      phase: 'stage',
-      fromEpoch,
-      toEpoch,
-      oldSchemaHash,
-      newSchemaHash,
-      migrationMode: 'explicit_transform',
-      migrationHook,
-      rollbackPolicy: 'restore_previous_epoch',
-      affectedFunctions: extra.affectedFunctions ?? [],
+      abiHash: extra.abiHash ?? this.abiHash,
+      affectedGlobals: extra.affectedGlobals ?? extra.affectedFunctions ?? [],
+      fromEpoch: extra.fromEpoch,
+      migrationHookFunctionId: hookFnId,
+      migrationMode: extra.migrationMode ?? 'explicit_transform',
+      moduleId: extra.moduleId,
+      nextSchemaHash,
+      patchDigest: extra.patchDigest ?? sha256(Buffer.from(`reload-patch:${extra.moduleId}:${extra.toEpoch}`)),
+      phase: extra.phase ?? 'stage',
+      previousSchemaHash,
+      toEpoch: extra.toEpoch,
+      transactionId: extra.transactionId ?? sha256(Buffer.from(`tx:${extra.moduleId}:${extra.fromEpoch}->${extra.toEpoch}`)),
     });
 
     // Update registered contracts to new static schema hash upon committed reload planning
     if (extra.applyToContracts) {
       for (const c of this.publishedContracts.values()) {
-        c.staticSchemaHash = newSchemaHash;
+        c.staticSchemaHash = nextSchemaHash;
       }
     }
 

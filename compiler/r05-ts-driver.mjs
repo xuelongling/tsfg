@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Unified Direct TypeScript -> Go Frontend -> HIR -> Core MLIR -> TSFGR05B -> Zig R05 VM Driver.
-// Enforces tsfg static-subset boundaries (rejecting .js, any, eval, Proxy, loose equality,
-// prototype mutation, and dynamic property delete with zero JS fallback).
+// Supports single-file AND multi-file TypeScript modules (with deterministic relative import
+// resolution and embedded official tsfg prelude — zero runtime dependency on test fixtures or
+// hardcoded drive letters). Enforces tsfg static-subset boundaries with zero JS fallback.
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { canonical } from './identity.mjs';
@@ -14,12 +15,22 @@ import { projectCommonProgram } from './common-program-hir.mjs';
 import { createCommonProgramPublication } from './common-program-analysis.mjs';
 import { emitCommonProgramCore } from './common-program-core.mjs';
 import { lowerCommonCoreToR05Bytecode } from './r05-bytecode-lower.mjs';
-
-const REPO_ROOT = path.resolve(import.meta.dirname, '..');
-const DEFAULT_FRONTEND_EXE = process.env.TSFG_FRONTEND_EXE ?? 'E:\\tsfg-artifacts\\r03-baseline\\tsfg-frontend-m24-8443e0f.exe';
-const DEFAULT_CORE_EXE = process.env.TSFG_CORE_IR_EXE ?? 'E:\\tsfg-build\\mlir-sdk\\bin\\tsfg-core-ir.exe';
-const DEFAULT_ZIG_EXE = process.env.TSFG_LOCKED_ZIG ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\zig\\zig.exe';
-const DEFAULT_R05_VM_EXE = process.env.TSFG_R05_VM_EXE ?? 'E:\\tsfg-build\\r05\\tsfg-r05-vm.exe';
+import {
+  TSFG_FRONTEND_CONFIG,
+  TSFG_FRONTEND_DECLARATIONS,
+  TSFG_FRONTEND_TARGET,
+  TSFG_PRELUDE_DTS,
+  TSFG_PRELUDE_SHA256,
+  TSFG_PRELUDE_VIRTUAL_PATH,
+} from './stdlib/tsfg-prelude.mjs';
+import {
+  REPO_ROOT,
+  resolveCoreIrExe,
+  resolveFrontendExe,
+  resolveR05VmExe,
+  resolveZigCacheEnv,
+  resolveZigExe,
+} from './tsfg-paths.mjs';
 
 const FORBIDDEN_TS_RULES = [
   { code: 'r01-forbid-any', re: /:\s*any\b|\bas\s+any\b|<any>/, msg: '`any` type is forbidden in tsfg' },
@@ -45,20 +56,81 @@ export function checkTsfgForbiddenSyntax(filePath, sourceText) {
   return diags;
 }
 
-let cachedBaselineFixture = null;
-function loadBaselineFixture() {
-  if (cachedBaselineFixture) return cachedBaselineFixture;
-  cachedBaselineFixture = JSON.parse(
-    readFileSync(path.join(REPO_ROOT, 'tests', 'r03', 'common-program-positive.json'), 'utf8'),
-  );
-  return cachedBaselineFixture;
+/**
+ * Normalize tsfg architecture marker aliases (`@value` / `@component`) to the Go frontend's
+ * recognized standard class decorators (`@tsfgValue` / `@tsfgComponent`) outside comments/strings
+ * while preserving exact line count and UTF-16 anchor structure when possible.
+ */
+function normalizeTsfgMarkers(sourceText) {
+  return sourceText
+    .replace(/(^|\s)@value\b/gm, '$1@tsfgValue')
+    .replace(/(^|\s)@component\b/gm, '$1@tsfgComponent');
 }
 
-export async function ensureR05VmBinary(vmExePath = DEFAULT_R05_VM_EXE) {
-  if (existsSync(vmExePath)) return vmExePath;
-  await mkdir(path.dirname(vmExePath), { recursive: true });
+/**
+ * Discover relative `.ts` imports transitively from a root `.ts` file on disk
+ * so multi-module TypeScript projects compile cleanly through the Go TypeScript frontend.
+ */
+export function collectTsModuleGraphFromDisk(rootAbsPath, projectRoot = path.dirname(rootAbsPath)) {
+  const normRoot = path.resolve(projectRoot);
+  const visited = new Map(); // virtualPath -> { virtualPath, absPath, content }
+  const importOrder = [];
+
+  const toVirtual = (absPath) => {
+    const rel = path.relative(normRoot, absPath).replaceAll('\\', '/');
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new TypeError(`r05-module-escape: imported module '${absPath}' escapes project root '${normRoot}'`);
+    }
+    return `/src/${rel}`;
+  };
+
+  const resolveImport = (fromAbs, spec) => {
+    if (/\.(?:m?js|cjs)$/i.test(spec)) {
+      throw new TypeError(`r01-forbid-js-import: JS module import '${spec}' is forbidden in tsfg`);
+    }
+    if (!spec.startsWith('./') && !spec.startsWith('../')) return null;
+    const base = path.resolve(path.dirname(fromAbs), spec);
+    const candidates = spec.endsWith('.ts')
+      ? [base]
+      : [`${base}.ts`, path.join(base, 'index.ts')];
+    for (const c of candidates) {
+      if (existsSync(c)) return c;
+    }
+    throw new TypeError(`r05-module-not-found: cannot resolve import '${spec}' from '${fromAbs}'`);
+  };
+
+  const visit = (absPath) => {
+    const resolved = path.resolve(absPath);
+    const vpath = toVirtual(resolved);
+    if (visited.has(vpath)) return;
+    const content = readFileSync(resolved, 'utf8');
+    visited.set(vpath, { virtualPath: vpath, absPath: resolved, content });
+
+    const stripped = content.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const re = /\b(?:import|export)\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/g;
+    let m;
+    while ((m = re.exec(stripped)) !== null) {
+      const targetAbs = resolveImport(resolved, m[1]);
+      if (targetAbs) visit(targetAbs);
+    }
+    importOrder.push(vpath);
+  };
+
+  visit(rootAbsPath);
+  return {
+    rootVirtualPath: toVirtual(path.resolve(rootAbsPath)),
+    files: [...visited.values()],
+    importOrder,
+  };
+}
+
+export async function ensureR05VmBinary(vmExePath = undefined, opts = {}) {
+  const targetExe = resolveR05VmExe(vmExePath);
+  if (existsSync(targetExe) && !opts.forceRebuild) return targetExe;
+  const zigExe = resolveZigExe(opts.zig);
+  await mkdir(path.dirname(targetExe), { recursive: true });
   const res = spawnSync(
-    DEFAULT_ZIG_EXE,
+    zigExe,
     [
       'build-exe',
       'r05-vm-cli.zig',
@@ -66,73 +138,89 @@ export async function ensureR05VmBinary(vmExePath = DEFAULT_R05_VM_EXE) {
       '-mcpu', 'x86_64_v2',
       '-O', 'ReleaseSafe',
       '-fno-lto',
-      `-femit-bin=${vmExePath}`,
+      `-femit-bin=${targetExe}`,
     ],
     {
       cwd: path.join(REPO_ROOT, 'runtime'),
       windowsHide: true,
       maxBuffer: 16 * 1024 * 1024,
-      env: {
-        ...process.env,
-        TEMP: 'E:\\tsfg-temp',
-        TMP: 'E:\\tsfg-temp',
-        ZIG_LOCAL_CACHE_DIR: 'E:\\tsfg-cache\\zig-local',
-        ZIG_GLOBAL_CACHE_DIR: 'E:\\tsfg-cache\\zig-global',
-      },
+      env: resolveZigCacheEnv(),
     },
   );
   if (res.status !== 0) {
     throw new Error(`r05-driver: failed to build tsfg-r05-vm.exe:\n${res.stderr.toString('utf8')}`);
   }
-  return vmExePath;
+  return targetExe;
 }
 
 /**
- * Compile raw TypeScript source directly through the official Go TypeScript frontend,
- * HIR, Core MLIR canonicalizer, and `TSFGR05B` bytecode lowerer.
+ * Compile one or more TypeScript files through the official Go TypeScript frontend,
+ * HIR, C++ MLIR canonicalizer (`tsfg-core-ir.exe`), and `TSFGR05B` bytecode lowerer.
+ *
+ * Accepts either:
+ *   - `files`: `Array<{ path: '/src/...', content: string }>` (multi-file modules!)
+ *   - or via `compileTsSourceToR05Bytecode(sourceText, opts)` for single-file calls.
  */
-export function compileTsSourceToR05Bytecode(sourceText, opts = {}) {
-  const filePath = opts.filePath ?? '/src/main.ts';
+export function compileTsFilesToCoreAndR05(files, opts = {}) {
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new TypeError('r05-driver: at least one TypeScript source file is required');
+  }
+  const rootFile = opts.rootFile ?? files[0].path;
   const entryNames = opts.entries ?? [opts.entry ?? 'main'];
 
-  const forbidden = checkTsfgForbiddenSyntax(filePath, sourceText);
-  if (forbidden.length > 0) {
-    const first = forbidden[0];
-    const err = new TypeError(`${first.code}: ${first.message}`);
-    err.diagnostics = forbidden;
-    throw err;
+  const sha = (s) => createHash('sha256').update(Buffer.from(s, 'utf8')).digest('hex');
+  const normalizedFiles = [];
+  for (const f of files) {
+    const forbidden = checkTsfgForbiddenSyntax(f.path, f.content);
+    if (forbidden.length > 0) {
+      const first = forbidden[0];
+      const err = new TypeError(`${first.code}: ${first.message}`);
+      err.diagnostics = forbidden;
+      throw err;
+    }
+    const content = normalizeTsfgMarkers(f.content);
+    normalizedFiles.push({
+      path: f.path.startsWith('/src/') ? f.path : `/src/${f.path.replace(/^\/+/, '')}`,
+      content,
+      sha256: sha(content),
+    });
   }
 
-  const sha = (s) => createHash('sha256').update(Buffer.from(s, 'utf8')).digest('hex');
-  const pos = loadBaselineFixture();
-  const dts = pos.payload.files.find((f) => f.path.endsWith('.d.ts'));
+  // Always include the embedded official prelude `.d.ts` (zero dependency on tests/r03 fixtures)
+  if (!normalizedFiles.some((f) => f.path === TSFG_PRELUDE_VIRTUAL_PATH)) {
+    normalizedFiles.push({
+      path: TSFG_PRELUDE_VIRTUAL_PATH,
+      content: TSFG_PRELUDE_DTS,
+      sha256: TSFG_PRELUDE_SHA256,
+    });
+  }
+  normalizedFiles.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
+  const tsModules = normalizedFiles.filter((f) => f.path.endsWith('.ts') && !f.path.endsWith('.d.ts'));
+  const sortedEntries = [...new Set(entryNames)].sort();
   const req = {
     family: 'tsfg.program-facts-request-candidate',
     version: commonSourceFormatV3.version,
     schemaHash: commonSourceFormatV3.schemaHash,
     input: {
       sourceRoot: '/src',
-      rootFile: '/src/main.ts',
-      files: [
-        { path: '/src/main.ts', content: sourceText, sha256: sha(sourceText) },
-        { path: dts.path, content: dts.content, sha256: dts.sha256 },
-      ],
-      declarations: pos.payload.declarations,
-      config: pos.payload.config,
-      target: pos.payload.target,
+      rootFile,
+      files: normalizedFiles,
+      declarations: TSFG_FRONTEND_DECLARATIONS,
+      config: TSFG_FRONTEND_CONFIG,
+      target: TSFG_FRONTEND_TARGET,
       compilationClosure: {
         roots: [
-          ...entryNames.map((name) => ({ kind: 'application', sourcePath: '/src/main.ts', name })),
-          { kind: 'module-initialization', sourcePath: '/src/main.ts', name: '$moduleInit' },
+          ...sortedEntries.map((name) => ({ kind: 'application', sourcePath: rootFile, name })),
+          ...tsModules.map((m) => ({ kind: 'module-initialization', sourcePath: m.path, name: '$moduleInit' })),
         ],
         requiredRoots: [],
       },
-      hostImports: [],
+      hostImports: opts.hostImports ?? [],
     },
   };
 
-  const frontendExe = opts.frontend ?? DEFAULT_FRONTEND_EXE;
+  const frontendExe = resolveFrontendExe(opts.frontend);
   const fe = spawnSync(frontendExe, ['--program-facts-io-v3'], {
     input: Buffer.from(canonical(req) + '\n', 'utf8'),
     windowsHide: true,
@@ -147,8 +235,9 @@ export function compileTsSourceToR05Bytecode(sourceText, opts = {}) {
   const pub = createCommonProgramPublication(hir);
   const coreMlir = emitCommonProgramCore(hir, pub, { targets: [] });
 
-  const coreExe = opts.core ?? DEFAULT_CORE_EXE;
-  const canon = spawnSync(coreExe, ['--common-program', '--canonicalize'], {
+  const coreExe = resolveCoreIrExe(opts.core);
+  const coreFlags = ['--common-program', opts.optimize ? '--optimize' : '--canonicalize'];
+  const canon = spawnSync(coreExe, coreFlags, {
     input: Buffer.from(coreMlir, 'utf8'),
     windowsHide: true,
     maxBuffer: 64 * 1024 * 1024,
@@ -157,12 +246,56 @@ export function compileTsSourceToR05Bytecode(sourceText, opts = {}) {
     throw new Error(`r05-core-ir-reject: ${canon.stderr.toString('utf8').trim()}`);
   }
   const canonicalMlir = canon.stdout.toString('utf8');
-  const lowered = lowerCommonCoreToR05Bytecode(canonicalMlir);
+  const lowered = lowerCommonCoreToR05Bytecode(canonicalMlir, {
+    moduleId: opts.moduleId,
+    abiHash: opts.abiHash,
+    staticSchemaHash: opts.staticSchemaHash,
+    codeVersion: opts.codeVersion,
+  });
 
   return {
+    facts,
+    hir,
+    publication: pub,
+    coreMlir,
     canonicalMlir,
     ...lowered,
   };
+}
+
+/**
+ * Compile raw TypeScript source directly through the official Go TypeScript frontend,
+ * HIR, Core MLIR canonicalizer, and `TSFGR05B` bytecode lowerer.
+ */
+export function compileTsSourceToR05Bytecode(sourceText, opts = {}) {
+  const filePath = opts.filePath ?? '/src/main.ts';
+  if (/\.(?:m?js|cjs)$/i.test(filePath)) {
+    const err = new TypeError(`r01-forbid-js-file: JS input file '${filePath}' is forbidden in tsfg`);
+    err.diagnostics = [{ code: 'r01-forbid-js-file', message: err.message }];
+    throw err;
+  }
+
+  if (opts.additionalFiles && opts.additionalFiles.length > 0) {
+    const rootVirtual = '/src/main.ts';
+    return compileTsFilesToCoreAndR05(
+      [{ path: rootVirtual, content: sourceText }, ...opts.additionalFiles],
+      { ...opts, rootFile: rootVirtual },
+    );
+  }
+
+  // If compiling from an existing file on disk with relative imports, collect its module graph!
+  if (opts.resolveImports && filePath && existsSync(filePath)) {
+    const graph = collectTsModuleGraphFromDisk(filePath, opts.projectRoot ?? path.dirname(filePath));
+    return compileTsFilesToCoreAndR05(
+      graph.files.map((f) => ({ path: f.virtualPath, content: f.content })),
+      { ...opts, rootFile: graph.rootVirtualPath },
+    );
+  }
+
+  return compileTsFilesToCoreAndR05(
+    [{ path: '/src/main.ts', content: sourceText }],
+    { ...opts, rootFile: '/src/main.ts' },
+  );
 }
 
 /**
@@ -177,6 +310,7 @@ export async function runTsOnR05ZigVm(input, opts = {}) {
   const compiled = compileTsSourceToR05Bytecode(sourceText, {
     ...opts,
     filePath,
+    resolveImports: isFile ? (opts.resolveImports ?? true) : false,
     entries: opts.entries ?? [entry],
   });
   const fnIdx = compiled.exportsByName.get(entry);
@@ -184,14 +318,23 @@ export async function runTsOnR05ZigVm(input, opts = {}) {
     throw new TypeError(`r05-driver-entry: exported function '${entry}' not found`);
   }
 
-  const vmExe = await ensureR05VmBinary(opts.vm ?? DEFAULT_R05_VM_EXE);
+  const vmExe = await ensureR05VmBinary(opts.vm);
   const vmArgs = ['--run', String(fnIdx)];
-  if (compiled.initFnIndex !== null && compiled.initFnIndex !== fnIdx) {
+  if (compiled.initFnIndices && compiled.initFnIndices.length > 0) {
+    const filteredInits = compiled.initFnIndices.filter((i) => i !== fnIdx);
+    if (filteredInits.length > 0) {
+      vmArgs.push('--init-fns', filteredInits.join(','));
+    }
+  } else if (compiled.initFnIndex !== null && compiled.initFnIndex !== fnIdx) {
     vmArgs.push('--init-fn', String(compiled.initFnIndex));
   }
   if (opts.unfused) vmArgs.push('--unfused');
   if (opts.fuel !== undefined) vmArgs.push('--fuel', String(opts.fuel));
   if (opts.args && opts.args.length > 0) vmArgs.push('--args', opts.args.join(','));
+  if (opts.breakpointPc !== undefined) vmArgs.push('--breakpoint-pc', String(opts.breakpointPc));
+  if (opts.breakpointOffset !== undefined) vmArgs.push('--breakpoint-offset', String(opts.breakpointOffset));
+  if (opts.debugStep) vmArgs.push('--debug-step');
+  if (opts.profileTrace) vmArgs.push('--profile-trace');
 
   const run = spawnSync(vmExe, vmArgs, {
     input: compiled.bytes,
@@ -202,5 +345,8 @@ export async function runTsOnR05ZigVm(input, opts = {}) {
     throw new Error(`r05-vm-exec-error (exit ${run.status}): ${run.stderr.toString('utf8').trim()}`);
   }
   const result = JSON.parse(run.stdout.toString('utf8').trim());
+  if (typeof opts.profileTrace === 'string' && result.trace) {
+    await writeFile(opts.profileTrace, JSON.stringify(result.trace, null, 2), 'utf8');
+  }
   return { compiled, result };
 }

@@ -57,6 +57,10 @@ pub const ValTag = enum(u8) {
     array = 7,
     span = 8,
     string = 9,
+    i64 = 10,
+    u32 = 11,
+    u64 = 12,
+    f32 = 13,
 };
 
 pub const Op = enum(u8) {
@@ -170,6 +174,29 @@ pub const Op = enum(u8) {
     gt_dyn = 81,
     ge_dyn = 82,
     neg_dyn = 83,
+
+    // Exact fixed-width numeric opcodes (i64, u32, u64, f32, sub-32 wrap)
+    const_i64 = 84, // dst, imm32=const_pool_f64 idx
+    const_u32 = 85, // dst, imm32=u32 bits
+    const_u64 = 86, // dst, imm32=const_pool_f64 idx
+    const_f32 = 87, // dst, imm32=f32 binary32 bits
+    add_i64 = 88,
+    sub_i64 = 89,
+    mul_i64 = 90,
+    div_i64 = 91,
+    rem_i64 = 92,
+    lt_i64 = 93,
+    le_i64 = 94,
+    gt_i64 = 95,
+    ge_i64 = 96,
+    div_u32 = 97,
+    rem_u32 = 98,
+    lt_u32 = 99,
+    le_u32 = 100,
+    gt_u32 = 101,
+    ge_u32 = 102,
+    f32_round = 103, // dst, a (strict IEEE binary32 rounding)
+    int_wrap = 104, // dst, a, imm32 (8=i8, -8=u8, 16=i16, -16=u16, 32=i32, -32=u32)
 
     // --- Internal-only predecoded superinstructions (NEVER serialized on disk!) ---
     super_add_i32_imm = 200, // fused: const_i32 + add_i32 (dst = a + imm32)
@@ -388,8 +415,8 @@ const Cursor = struct {
 };
 
 fn isDiskOpcode(raw: u8) bool {
-    return raw <= 83 and switch (raw) {
-        0...7, 10...83 => true,
+    return raw <= 104 and switch (raw) {
+        0...7, 10...104 => true,
         else => false,
     };
 }
@@ -587,7 +614,7 @@ pub fn verifyAndPredecode(allocator: std.mem.Allocator, bytes: []const u8, expec
                 .ret => {
                     if (ins.a != 0xFFFF and ins.a >= reg_count) return error.InvalidRegister;
                 },
-                .const_f64 => {
+                .const_f64, .const_i64, .const_u64 => {
                     if (ins.dst >= reg_count) return error.InvalidRegister;
                     if (ins.imm32 < 0 or @as(usize, @intCast(ins.imm32)) >= f64_pool.len) return error.InvalidOpcode;
                 },
@@ -643,10 +670,10 @@ pub fn verifyAndPredecode(allocator: std.mem.Allocator, bytes: []const u8, expec
                     if (ins.imm32 < 0 or @as(u32, @intCast(ins.imm32)) >= reg_count) return error.InvalidRegister;
                 },
                 .nop, .fuel, .gc_safepoint, .unreachable_trap => {},
-                .const_i32, .const_bool, .const_undef, .const_null, .catch_take => {
+                .const_i32, .const_u32, .const_f32, .const_bool, .const_undef, .const_null, .catch_take => {
                     if (ins.dst >= reg_count) return error.InvalidRegister;
                 },
-                .mov, .neg_i32, .bit_not, .neg_f64, .neg_dyn, .bool_not, .narrow_i32, .assert_non_null, .clone_obj, .array_len, .get_type_id, .str_len => {
+                .mov, .neg_i32, .bit_not, .neg_f64, .neg_dyn, .bool_not, .narrow_i32, .assert_non_null, .clone_obj, .array_len, .get_type_id, .str_len, .f32_round, .int_wrap => {
                     if (ins.dst >= reg_count or ins.a >= reg_count) return error.InvalidRegister;
                 },
                 .throw_exc, .span_release, .mark_uninit, .mark_init, .check_init => {

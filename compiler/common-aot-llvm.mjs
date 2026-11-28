@@ -48,8 +48,14 @@ declare i32 @tsfg_eng_arr_push(ptr, i64, i16, i64)
 declare void @tsfg_eng_arr_set(ptr, i64, i32, i16, i64)
 declare void @tsfg_eng_arr_resize(ptr, i64, i32, i16, i64)
 declare i64 @tsfg_eng_span_begin(ptr, i64, i32, i32, i32)
+declare void @tsfg_eng_span_release(ptr, i64)
 declare i16 @tsfg_eng_read_elem_tag(ptr, i16, i64, i32)
 declare i64 @tsfg_eng_read_elem_payload(ptr, i16, i64, i32)
+declare i64 @tsfg_eng_str_from_u16(ptr, ptr, i32)
+declare i32 @tsfg_eng_str_len(ptr, i64)
+declare i64 @tsfg_eng_str_concat(ptr, i64, i64)
+declare i64 @tsfg_eng_str_slice(ptr, i64, i32, i32)
+declare i32 @tsfg_eng_str_char_code_at(ptr, i64, i32)
 `;
 
 const sanitizeSym = (s) => 'aot_cmn_' + s.replace(/[^a-zA-Z0-9_]/g, '_');
@@ -62,6 +68,20 @@ const regSlot = (r) => r.slice(1).replace(/[^a-zA-Z0-9_]/g, '_');
 export function lowerCommonCoreToLlvm(mlirText) {
   const mod = typeof mlirText === 'string' ? parseCommonCoreMlir(mlirText) : mlirText;
   const fnLines = [];
+  const strGlobals = [];
+  const strGlobalByKey = new Map();
+  const internUtf16Global = (units) => {
+    const key = units.join(',');
+    if (strGlobalByKey.has(key)) return strGlobalByKey.get(key);
+    const sym = `@.tsfg_u16_${strGlobals.length}`;
+    if (units.length > 0) {
+      const elems = units.map((u) => `i16 ${u & 0xffff}`).join(', ');
+      strGlobals.push(`${sym} = private unnamed_addr constant [${units.length} x i16] [${elems}], align 2`);
+    }
+    const entry = { sym, len: units.length };
+    strGlobalByKey.set(key, entry);
+    return entry;
+  };
 
   // Map every functionId -> { sym, index, paramCount, expectsEnv, fn }
   const fnInfoById = new Map();
@@ -179,6 +199,7 @@ export function lowerCommonCoreToLlvm(mlirText) {
     lines.push(`  br i1 %ent_bad, label %fn_trap_noexit, label %${fn.blocks[0].label}`);
 
     const blockMap = new Map(fn.blocks.map((b) => [b.label, b]));
+    const localSpanRegs = new Set();
     let tmpN = 0;
     const t = () => `%_v${tmpN++}`;
     const lbl = (prefix) => `${prefix}_${tmpN++}`;
@@ -229,9 +250,19 @@ export function lowerCommonCoreToLlvm(mlirText) {
           lines.push(`  br i1 ${bad}, label %fn_abort, label %${cont}`);
           lines.push(`${cont}:`);
         } else if (n === 'tsfg_program.constant') {
-          const v = Number(p.decimal ?? p.value ?? 0) | 0;
-          const u = BigInt(v >>> 0).toString();
-          storeReg(op.result, '3', u);
+          const scalarName = mod.typesById.get(op.viewType)?.name ?? 'i32';
+          const decStr = String(p.decimal ?? p.value ?? '0');
+          if (scalarName === 'i64' || scalarName === 'isize') {
+            storeReg(op.result, '10', BigInt.asUintN(64, BigInt(decStr)).toString());
+          } else if (scalarName === 'u64' || scalarName === 'usize') {
+            storeReg(op.result, '12', BigInt.asUintN(64, BigInt(decStr)).toString());
+          } else if (scalarName === 'u32') {
+            storeReg(op.result, '11', BigInt.asUintN(32, BigInt(decStr)).toString());
+          } else {
+            const v = Number(BigInt.asIntN(32, BigInt(decStr)));
+            const u = BigInt(v >>> 0).toString();
+            storeReg(op.result, '3', u);
+          }
         } else if (n === 'tsfg_program.boolean') {
           storeReg(op.result, '2', p.value ? '1' : '0');
         } else if (n === 'tsfg_program.undefined') {
@@ -239,8 +270,63 @@ export function lowerCommonCoreToLlvm(mlirText) {
         } else if (n === 'tsfg_program.null') {
           storeReg(op.result, '1', '0');
         } else if (n === 'tsfg_program.floating') {
-          const bits = BigInt('0x' + (p.bits ?? '0')).toString();
-          storeReg(op.result, '4', bits);
+          const bitsHex = String(p.bits ?? '0');
+          const scalarName = mod.typesById.get(op.viewType)?.name ?? (bitsHex.length === 8 ? 'f32' : 'f64');
+          if (scalarName === 'f32' || bitsHex.length === 8) {
+            const bits32 = BigInt.asUintN(32, BigInt('0x' + bitsHex)).toString();
+            storeReg(op.result, '13', bits32);
+          } else {
+            const bits = BigInt('0x' + bitsHex).toString();
+            storeReg(op.result, '4', bits);
+          }
+        } else if (n === 'tsfg_program.string' || n === 'tsfg_program.string_literal') {
+          const units = Array.isArray(p.codeUnits)
+            ? p.codeUnits
+            : (() => {
+                const s = String(p.value ?? '');
+                const arr = [];
+                for (let si = 0; si < s.length; si++) arr.push(s.charCodeAt(si));
+                return arr;
+              })();
+          const g = internUtf16Global(units);
+          const sid = t();
+          const ptrArg = g.len > 0 ? g.sym : 'null';
+          lines.push(`  ${sid} = call i64 @tsfg_eng_str_from_u16(ptr %e, ptr ${ptrArg}, i32 ${g.len})`);
+          emitTrapGuard();
+          storeReg(op.result, '9', sid);
+        } else if (n === 'tsfg_program.string_length') {
+          const s = loadReg(op.operands[0]);
+          const l32 = t(), l64 = t();
+          lines.push(`  ${l32} = call i32 @tsfg_eng_str_len(ptr %e, i64 ${s.pay})`);
+          emitTrapGuard();
+          lines.push(`  ${l64} = zext i32 ${l32} to i64`);
+          storeReg(op.result, '3', l64);
+        } else if (n === 'tsfg_program.string_concat') {
+          const sa = loadReg(op.operands[0]);
+          const sb = loadReg(op.operands[1]);
+          const sid = t();
+          lines.push(`  ${sid} = call i64 @tsfg_eng_str_concat(ptr %e, i64 ${sa.pay}, i64 ${sb.pay})`);
+          emitTrapGuard();
+          storeReg(op.result, '9', sid);
+        } else if (n === 'tsfg_program.string_slice') {
+          const s = loadReg(op.operands[0]);
+          const st = loadReg(op.operands[1]);
+          const en = loadReg(op.operands[2]);
+          const st32 = t(), en32 = t(), sid = t();
+          lines.push(`  ${st32} = trunc i64 ${st.pay} to i32`);
+          lines.push(`  ${en32} = trunc i64 ${en.pay} to i32`);
+          lines.push(`  ${sid} = call i64 @tsfg_eng_str_slice(ptr %e, i64 ${s.pay}, i32 ${st32}, i32 ${en32})`);
+          emitTrapGuard();
+          storeReg(op.result, '9', sid);
+        } else if (n === 'tsfg_program.string_char_code_at') {
+          const s = loadReg(op.operands[0]);
+          const idx = loadReg(op.operands[1]);
+          const idx32 = t(), cc = t(), cc64 = t();
+          lines.push(`  ${idx32} = trunc i64 ${idx.pay} to i32`);
+          lines.push(`  ${cc} = call i32 @tsfg_eng_str_char_code_at(ptr %e, i64 ${s.pay}, i32 ${idx32})`);
+          emitTrapGuard();
+          lines.push(`  ${cc64} = zext i32 ${cc} to i64`);
+          storeReg(op.result, '3', cc64);
         } else if (n === 'tsfg_program.cell') {
           const cIdx = cellIdxMap.get(p.binding ?? op.result);
           storeReg(op.result, '5', String(cIdx));
@@ -268,10 +354,19 @@ export function lowerCommonCoreToLlvm(mlirText) {
           storeReg(op.result, tv, pv);
         } else if (n === 'tsfg_program.numeric_use') {
           const v = loadReg(op.operands[0]);
-          const isI32 = t(), isF64 = t(), isNum = t(), badL = lbl('num_bad'), okL = lbl('num_ok');
+          const isI32 = t(), isF64 = t(), isI64 = t(), isU32 = t(), isU64 = t(), isF32 = t();
+          const m1 = t(), m2 = t(), m3 = t(), m4 = t(), isNum = t(), badL = lbl('num_bad'), okL = lbl('num_ok');
           lines.push(`  ${isI32} = icmp eq i16 ${v.tag}, 3`);
           lines.push(`  ${isF64} = icmp eq i16 ${v.tag}, 4`);
-          lines.push(`  ${isNum} = or i1 ${isI32}, ${isF64}`);
+          lines.push(`  ${isI64} = icmp eq i16 ${v.tag}, 10`);
+          lines.push(`  ${isU32} = icmp eq i16 ${v.tag}, 11`);
+          lines.push(`  ${isU64} = icmp eq i16 ${v.tag}, 12`);
+          lines.push(`  ${isF32} = icmp eq i16 ${v.tag}, 13`);
+          lines.push(`  ${m1} = or i1 ${isI32}, ${isF64}`);
+          lines.push(`  ${m2} = or i1 ${isI64}, ${isU32}`);
+          lines.push(`  ${m3} = or i1 ${isU64}, ${isF32}`);
+          lines.push(`  ${m4} = or i1 ${m1}, ${m2}`);
+          lines.push(`  ${isNum} = or i1 ${m4}, ${m3}`);
           lines.push(`  br i1 ${isNum}, label %${okL}, label %${badL}`);
           lines.push(`${badL}:`);
           lines.push('  call void @tsfg_eng_set_trap(ptr %e, i32 9)');
@@ -290,18 +385,47 @@ export function lowerCommonCoreToLlvm(mlirText) {
             lines.push(`  ${p64} = zext i1 ${b} to i64`);
             storeReg(op.result, '2', p64);
           } else {
-            const isF64L = t(), isF64R = t(), isF64 = t();
-            const f64L = lbl('bin_f64'), i32L = lbl('bin_i32'), binDone = lbl('bin_done');
+            const binDone = lbl('bin_done');
             const f64Supported = oper === '+' || oper === '-' || oper === '*' || oper === '/' || oper === '<' || oper === '<=' || oper === '>' || oper === '>=';
+            const u32Supported = oper === '/' || oper === '%' || oper === '<' || oper === '<=' || oper === '>' || oper === '>=';
+            const i64Supported = f64Supported || oper === '%';
+
+            if (oper === '+') {
+              const isStr = t(), strL = lbl('bin_str'), notStrL = lbl('bin_nstr');
+              lines.push(`  ${isStr} = icmp eq i16 ${l.tag}, 9`);
+              lines.push(`  br i1 ${isStr}, label %${strL}, label %${notStrL}`);
+              lines.push(`${strL}:`);
+              const sRes = t();
+              lines.push(`  ${sRes} = call i64 @tsfg_eng_str_concat(ptr %e, i64 ${l.pay}, i64 ${r.pay})`);
+              emitTrapGuard();
+              storeReg(op.result, '9', sRes);
+              lines.push(`  br label %${binDone}`);
+              lines.push(`${notStrL}:`);
+            }
+
             if (f64Supported) {
+              const isF64L = t(), isF64R = t(), isF64 = t();
+              const f64L = lbl('bin_f64'), notF64L = lbl('bin_nf64');
               lines.push(`  ${isF64L} = icmp eq i16 ${l.tag}, 4`);
               lines.push(`  ${isF64R} = icmp eq i16 ${r.tag}, 4`);
               lines.push(`  ${isF64} = or i1 ${isF64L}, ${isF64R}`);
-              lines.push(`  br i1 ${isF64}, label %${f64L}, label %${i32L}`);
+              lines.push(`  br i1 ${isF64}, label %${f64L}, label %${notF64L}`);
               lines.push(`${f64L}:`);
-              const fa = t(), fb = t();
-              lines.push(`  ${fa} = bitcast i64 ${l.pay} to double`);
-              lines.push(`  ${fb} = bitcast i64 ${r.pay} to double`);
+              // Convert either operand from f32/i32 if mixed with f64
+              const lIsF32 = t(), lF32Tmp = t(), lF32Cast = t(), lF32Ext = t(), lF64Direct = t(), fa = t();
+              const rIsF32 = t(), rF32Tmp = t(), rF32Cast = t(), rF32Ext = t(), rF64Direct = t(), fb = t();
+              lines.push(`  ${lIsF32} = icmp eq i16 ${l.tag}, 13`);
+              lines.push(`  ${lF32Tmp} = trunc i64 ${l.pay} to i32`);
+              lines.push(`  ${lF32Cast} = bitcast i32 ${lF32Tmp} to float`);
+              lines.push(`  ${lF32Ext} = fpext float ${lF32Cast} to double`);
+              lines.push(`  ${lF64Direct} = bitcast i64 ${l.pay} to double`);
+              lines.push(`  ${fa} = select i1 ${lIsF32}, double ${lF32Ext}, double ${lF64Direct}`);
+              lines.push(`  ${rIsF32} = icmp eq i16 ${r.tag}, 13`);
+              lines.push(`  ${rF32Tmp} = trunc i64 ${r.pay} to i32`);
+              lines.push(`  ${rF32Cast} = bitcast i32 ${rF32Tmp} to float`);
+              lines.push(`  ${rF32Ext} = fpext float ${rF32Cast} to double`);
+              lines.push(`  ${rF64Direct} = bitcast i64 ${r.pay} to double`);
+              lines.push(`  ${fb} = select i1 ${rIsF32}, double ${rF32Ext}, double ${rF64Direct}`);
               if (oper === '+' || oper === '-' || oper === '*' || oper === '/') {
                 const fop = { '+': 'fadd', '-': 'fsub', '*': 'fmul', '/': 'fdiv' }[oper];
                 const fr = t(), isNan = t(), rawBits = t(), canonBits = t();
@@ -318,8 +442,109 @@ export function lowerCommonCoreToLlvm(mlirText) {
                 storeReg(op.result, '2', fp64);
               }
               lines.push(`  br label %${binDone}`);
-              lines.push(`${i32L}:`);
+              lines.push(`${notF64L}:`);
+
+              const isF32L = t(), isF32R = t(), isF32 = t();
+              const f32L = lbl('bin_f32'), notF32L = lbl('bin_nf32');
+              lines.push(`  ${isF32L} = icmp eq i16 ${l.tag}, 13`);
+              lines.push(`  ${isF32R} = icmp eq i16 ${r.tag}, 13`);
+              lines.push(`  ${isF32} = or i1 ${isF32L}, ${isF32R}`);
+              lines.push(`  br i1 ${isF32}, label %${f32L}, label %${notF32L}`);
+              lines.push(`${f32L}:`);
+              const la32 = t(), rb32 = t(), f32a = t(), f32b = t();
+              lines.push(`  ${la32} = trunc i64 ${l.pay} to i32`);
+              lines.push(`  ${rb32} = trunc i64 ${r.pay} to i32`);
+              lines.push(`  ${f32a} = bitcast i32 ${la32} to float`);
+              lines.push(`  ${f32b} = bitcast i32 ${rb32} to float`);
+              if (oper === '+' || oper === '-' || oper === '*' || oper === '/') {
+                const fop = { '+': 'fadd', '-': 'fsub', '*': 'fmul', '/': 'fdiv' }[oper];
+                const fr = t(), isNan = t(), raw32 = t(), canon32 = t(), canon64 = t();
+                lines.push(`  ${fr} = ${fop} float ${f32a}, ${f32b}`);
+                lines.push(`  ${isNan} = fcmp uno float ${fr}, ${fr}`);
+                lines.push(`  ${raw32} = bitcast float ${fr} to i32`);
+                lines.push(`  ${canon32} = select i1 ${isNan}, i32 2143289344, i32 ${raw32}`);
+                lines.push(`  ${canon64} = zext i32 ${canon32} to i64`);
+                storeReg(op.result, '13', canon64);
+              } else {
+                const fpred = { '<': 'olt', '<=': 'ole', '>': 'ogt', '>=': 'oge' }[oper];
+                const fc = t(), fp64 = t();
+                lines.push(`  ${fc} = fcmp ${fpred} float ${f32a}, ${f32b}`);
+                lines.push(`  ${fp64} = zext i1 ${fc} to i64`);
+                storeReg(op.result, '2', fp64);
+              }
+              lines.push(`  br label %${binDone}`);
+              lines.push(`${notF32L}:`);
             }
+
+            if (i64Supported) {
+              const isI64L = t(), isI64R = t(), isI64 = t();
+              const i64L = lbl('bin_i64'), notI64L = lbl('bin_ni64');
+              lines.push(`  ${isI64L} = icmp eq i16 ${l.tag}, 10`);
+              lines.push(`  ${isI64R} = icmp eq i16 ${r.tag}, 10`);
+              lines.push(`  ${isI64} = or i1 ${isI64L}, ${isI64R}`);
+              lines.push(`  br i1 ${isI64}, label %${i64L}, label %${notI64L}`);
+              lines.push(`${i64L}:`);
+              if (oper === '+' || oper === '-' || oper === '*') {
+                const llOp = { '+': 'add', '-': 'sub', '*': 'mul' }[oper];
+                const res64 = t();
+                lines.push(`  ${res64} = ${llOp} i64 ${l.pay}, ${r.pay}`);
+                storeReg(op.result, '10', res64);
+              } else if (oper === '/' || oper === '%') {
+                const isZ = t(), badL = lbl('div64_bad'), okL = lbl('div64_ok');
+                lines.push(`  ${isZ} = icmp eq i64 ${r.pay}, 0`);
+                lines.push(`  br i1 ${isZ}, label %${badL}, label %${okL}`);
+                lines.push(`${badL}:`);
+                lines.push('  call void @tsfg_eng_set_trap(ptr %e, i32 3)');
+                lines.push('  br label %fn_abort');
+                lines.push(`${okL}:`);
+                const res64 = t();
+                lines.push(`  ${res64} = ${oper === '/' ? 'sdiv' : 'srem'} i64 ${l.pay}, ${r.pay}`);
+                storeReg(op.result, '10', res64);
+              } else {
+                const pred = { '<': 'slt', '<=': 'sle', '>': 'sgt', '>=': 'sge' }[oper];
+                const c = t(), p64 = t();
+                lines.push(`  ${c} = icmp ${pred} i64 ${l.pay}, ${r.pay}`);
+                lines.push(`  ${p64} = zext i1 ${c} to i64`);
+                storeReg(op.result, '2', p64);
+              }
+              lines.push(`  br label %${binDone}`);
+              lines.push(`${notI64L}:`);
+            }
+
+            if (u32Supported) {
+              const isU32L = t(), isU32R = t(), isU32 = t();
+              const u32L = lbl('bin_u32'), notU32L = lbl('bin_nu32');
+              lines.push(`  ${isU32L} = icmp eq i16 ${l.tag}, 11`);
+              lines.push(`  ${isU32R} = icmp eq i16 ${r.tag}, 11`);
+              lines.push(`  ${isU32} = or i1 ${isU32L}, ${isU32R}`);
+              lines.push(`  br i1 ${isU32}, label %${u32L}, label %${notU32L}`);
+              lines.push(`${u32L}:`);
+              const ua = t(), ub = t();
+              lines.push(`  ${ua} = trunc i64 ${l.pay} to i32`);
+              lines.push(`  ${ub} = trunc i64 ${r.pay} to i32`);
+              if (oper === '/' || oper === '%') {
+                const isZ = t(), badL = lbl('udiv_bad'), okL = lbl('udiv_ok');
+                lines.push(`  ${isZ} = icmp eq i32 ${ub}, 0`);
+                lines.push(`  br i1 ${isZ}, label %${badL}, label %${okL}`);
+                lines.push(`${badL}:`);
+                lines.push('  call void @tsfg_eng_set_trap(ptr %e, i32 3)');
+                lines.push('  br label %fn_abort');
+                lines.push(`${okL}:`);
+                const res32 = t(), res64 = t();
+                lines.push(`  ${res32} = ${oper === '/' ? 'udiv' : 'urem'} i32 ${ua}, ${ub}`);
+                lines.push(`  ${res64} = zext i32 ${res32} to i64`);
+                storeReg(op.result, '11', res64);
+              } else {
+                const pred = { '<': 'ult', '<=': 'ule', '>': 'ugt', '>=': 'uge' }[oper];
+                const cmp = t(), p64 = t();
+                lines.push(`  ${cmp} = icmp ${pred} i32 ${ua}, ${ub}`);
+                lines.push(`  ${p64} = zext i1 ${cmp} to i64`);
+                storeReg(op.result, '2', p64);
+              }
+              lines.push(`  br label %${binDone}`);
+              lines.push(`${notU32L}:`);
+            }
+
             const a = t(), b = t();
             lines.push(`  ${a} = trunc i64 ${l.pay} to i32`);
             lines.push(`  ${b} = trunc i64 ${r.pay} to i32`);
@@ -381,7 +606,7 @@ export function lowerCommonCoreToLlvm(mlirText) {
             } else {
               throw new Error(`Unsupported AOT binary op: ${oper}`);
             }
-            if (f64Supported) {
+            if (f64Supported || i64Supported || u32Supported || oper === '+') {
               lines.push(`  br label %${binDone}`);
               lines.push(`${binDone}:`);
             }
@@ -467,6 +692,19 @@ export function lowerCommonCoreToLlvm(mlirText) {
           storeReg(op.result, v.tag, v.pay);
         } else if (n === 'tsfg_program.carrier_cast' || n === 'tsfg_program.view' || n === 'tsfg_program.pack') {
           const v = loadReg(op.operands[0]);
+          const targetTy = p.target ? mod.typesById.get(p.target) : null;
+          const isNonNullView = n === 'tsfg_program.view' && targetTy && targetTy.kind !== 'union' && targetTy.kind !== 'unknown' && targetTy.kind !== 'undefined' && targetTy.kind !== 'null';
+          if (isNonNullView) {
+            const isU = t(), isN = t(), isBad = t(), badL = lbl('vn_bad'), okL = lbl('vn_ok');
+            lines.push(`  ${isU} = icmp eq i16 ${v.tag}, 0`);
+            lines.push(`  ${isN} = icmp eq i16 ${v.tag}, 1`);
+            lines.push(`  ${isBad} = or i1 ${isU}, ${isN}`);
+            lines.push(`  br i1 ${isBad}, label %${badL}, label %${okL}`);
+            lines.push(`${badL}:`);
+            lines.push('  call void @tsfg_eng_set_trap(ptr %e, i32 11)');
+            lines.push('  br label %fn_abort');
+            lines.push(`${okL}:`);
+          }
           storeReg(op.result, v.tag, v.pay);
         } else if (n === 'tsfg_program.receiver_create') {
           const ntNum = mod.classNumId.get(p.new_target ?? p.owner);
@@ -641,6 +879,7 @@ export function lowerCommonCoreToLlvm(mlirText) {
           lines.push(`  ${ln32} = trunc i64 ${ln.pay} to i32`);
           lines.push(`  ${sp} = call i64 @tsfg_eng_span_begin(ptr %e, i64 ${arr.pay}, i32 ${st32}, i32 ${ln32}, i32 0)`);
           emitTrapGuard();
+          if (op.result) localSpanRegs.add(op.result);
           storeReg(op.result, '8', sp);
         } else if (n === 'tsfg_program.array_read') {
           const recv = loadReg(op.operands[0]);
@@ -788,8 +1027,21 @@ export function lowerCommonCoreToLlvm(mlirText) {
           emitBranchWithArgs(op.successors[1], fArgs);
           terminated = true;
         } else if (n === 'func.return') {
-          if (op.operands.length > 0) {
-            const rv = loadReg(op.operands[0]);
+          const retReg = op.operands.length > 0 ? op.operands[0] : null;
+          for (const spReg of localSpanRegs) {
+            if (spReg !== retReg) {
+              const sv = loadReg(spReg);
+              const isSp = t(), relL = lbl('srel'), skipL = lbl('sskip');
+              lines.push(`  ${isSp} = icmp eq i16 ${sv.tag}, 8`);
+              lines.push(`  br i1 ${isSp}, label %${relL}, label %${skipL}`);
+              lines.push(`${relL}:`);
+              lines.push(`  call void @tsfg_eng_span_release(ptr %e, i64 ${sv.pay})`);
+              lines.push(`  br label %${skipL}`);
+              lines.push(`${skipL}:`);
+            }
+          }
+          if (retReg) {
+            const rv = loadReg(retReg);
             lines.push(`  store i16 ${rv.tag}, ptr %out_tag`);
             lines.push(`  store i64 ${rv.pay}, ptr %out_pay`);
           }
@@ -822,8 +1074,9 @@ export function lowerCommonCoreToLlvm(mlirText) {
     if (info) exports[name] = { sym: info.sym, functionId: fid, paramCount: info.paramCount };
   }
 
+  const globalsBlock = strGlobals.length > 0 ? strGlobals.join('\n') + '\n\n' : '';
   return {
-    llvmIr: LLVM_HEADER + '\n' + fnLines.join('\n\n') + '\n',
+    llvmIr: LLVM_HEADER + '\n' + globalsBlock + fnLines.join('\n\n') + '\n',
     mod,
     initSym: 'aot_cmn_bootstrap',
     exports,

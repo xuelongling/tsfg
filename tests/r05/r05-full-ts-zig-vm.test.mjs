@@ -6,15 +6,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { CommonCoreVm } from '../../compiler/common-vm.mjs';
 import { compileTsSourceToR05Bytecode, runTsOnR05ZigVm } from '../../compiler/r05-ts-driver.mjs';
+import { resolveTempDir, resolveZigCacheEnv, resolveZigExe } from '../../compiler/tsfg-paths.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
 const TSFGC = path.join(REPO_ROOT, 'tooling', 'tsfgc.mjs');
-const ZIG_EXE = process.env.TSFG_LOCKED_ZIG ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\zig\\zig.exe';
-const WORK_DIR = path.join('E:\\tsfg-temp', 'r05-full-ts-vm');
+const ZIG_EXE = resolveZigExe();
+const WORK_DIR = resolveTempDir('r05-full-ts-vm');
 
 async function verifyParityWithCommonVm(source, entry, args = [], expected = {}) {
   const unfused = await runTsOnR05ZigVm(source, { entry, args, unfused: true });
@@ -206,19 +207,102 @@ test('R05 Unified Zig TS VM: Direct `tsfgc.mjs --ts` CLI Execution & `--emit r05
   assert.equal(emitBc.stdout.subarray(0, 8).toString('ascii'), 'TSFGR05B');
 });
 
-test('R05 Zig VM Native Unit Suite: Lossless UTF-16 Strings (incl. Lone Surrogates), Typed Object Fields & GC Relocation', () => {
+test('R05 Zig VM Native Unit Suite: Lossless UTF-16 Strings (incl. Lone Surrogates), Fixed-Width Numerics, DebugHook & GC Relocation', () => {
   const res = spawnSync(ZIG_EXE, ['test', path.join(REPO_ROOT, 'runtime', 'r05-vm-test.zig')], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
-    env: {
-      ...process.env,
-      TEMP: 'E:\\tsfg-temp',
-      TMP: 'E:\\tsfg-temp',
-      ZIG_LOCAL_CACHE_DIR: 'E:\\tsfg-cache\\zig-local',
-      ZIG_GLOBAL_CACHE_DIR: 'E:\\tsfg-cache\\zig-global',
-    },
+    env: resolveZigCacheEnv(),
   });
   assert.equal(res.status, 0, `zig test r05-vm-test.zig failed:\n${res.stdout}\n${res.stderr}`);
+});
+
+test('R05 Unified Zig TS VM: Multi-File TS Imports, Topological $moduleInit, @value Alias, Span Release, Live Breakpoint & Win32 QPC Trace', async () => {
+  const projDir = path.join(WORK_DIR, 'multi-file-mod');
+  await mkdir(projDir, { recursive: true });
+  await writeFile(
+    path.join(projDir, 'math.ts'),
+    `
+@value
+export class Pair {
+  a: i32 = 10;
+  b: i32 = 20;
+}
+
+export let initCounter: i32 = 7;
+
+export function sumSpan(arr: i32[]): i32 {
+  const sp: ReadSpan<i32> = readSpan(arr, 0, 2);
+  return sp[0] + sp[1];
+}
+`,
+    'utf8',
+  );
+  const mainTs = path.join(projDir, 'main.ts');
+  await writeFile(
+    mainTs,
+    `
+import { Pair, initCounter, sumSpan } from './math';
+
+let derivedInit: i32 = initCounter * 3; // 21 (proves math.ts initialized BEFORE main.ts!)
+
+export function runMulti(extra: i32): i32 {
+  const p: Pair = new Pair();
+  const q: Pair = p;
+  q.a = 100; // @value copy isolation: p.a remains 10!
+  const arr: i32[] = [5, 6];
+  const s: i32 = sumSpan(arr); // ReadSpan released on return!
+  arr[0] = 9; // MUST succeed because ReadSpan borrow was released on return!
+  return derivedInit + p.a + q.a + s + arr[0] + extra; // 21 + 10 + 100 + 11 + 9 + extra = 151 + extra
+}
+`,
+    'utf8',
+  );
+
+  const tracePath = path.join(projDir, 'vm-trace.json');
+  const { result } = await runTsOnR05ZigVm(mainTs, {
+    isFile: true,
+    entry: 'runMulti',
+    args: [4],
+    breakpointPc: 0,
+    profileTrace: tracePath,
+  });
+  assert.equal(result.status, 'ok', `runMulti failed: ${JSON.stringify(result)}`);
+  assert.equal(result.i32, 155);
+  assert.ok(Array.isArray(result.debugPauses) && result.debugPauses.length >= 1, 'Expected live VM breakpoint debug pause');
+  assert.equal(result.debugPauses[0].pc, 0);
+
+  const trace = JSON.parse(await readFile(tracePath, 'utf8'));
+  assert.ok(Array.isArray(trace.traceEvents), 'Expected Win32 QPC Chrome Trace JSON');
+});
+
+test('R05 Unified Zig TS VM: Exact f32, u32, and Direct-Return Non-Null ! Trap', async () => {
+  const tsSource = `
+export function directNonNull(x: i32 | undefined): i32 {
+  return x!;
+}
+
+export function f32AndU32(): i32 {
+  const a: f32 = 1.5;
+  const b: f32 = 2.5;
+  const c: f32 = a + b;
+  const u: u32 = 4000000000;
+  const half: u32 = u / 2;
+  let ok: i32 = 0;
+  if (c > 3.5) { ok = ok + 10; }
+  if (half === 2000000000) { ok = ok + 20; }
+  return ok;
+}
+`;
+  const okRes = await runTsOnR05ZigVm(tsSource, { entry: 'f32AndU32' });
+  assert.equal(okRes.result.status, 'ok', `f32AndU32 failed: ${JSON.stringify(okRes.result)}`);
+  assert.equal(okRes.result.i32, 30);
+
+  const nnOk = await runTsOnR05ZigVm(tsSource, { entry: 'directNonNull', args: [42] });
+  assert.equal(nnOk.result.status, 'ok');
+  assert.equal(nnOk.result.i32, 42);
+
+  const nnTrap = await runTsOnR05ZigVm(tsSource, { entry: 'directNonNull', args: ['undefined'] });
+  assert.equal(nnTrap.result.status, 'trap');
 });
 
 test('R05 Unified Zig TS VM: Strict Architecture Contract Rejections (.js, any, eval, Proxy, loose ==, __proto__, delete)', () => {

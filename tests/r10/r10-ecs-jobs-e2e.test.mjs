@@ -2,28 +2,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { validateTmetaArtifact } from '../../compiler/r04-protocols.mjs';
 import {
   analyzeQueryConflictGraph,
   compileComponentSchemas,
+  compileDynamicEcsKernelDll,
   compileVectorizedEcsKernelDll,
   emitEcsTmeta,
+  extractEcsFromTsSource,
 } from '../../compiler/r10-ecs-query-compiler.mjs';
+import { resolveTempDir, resolveZigCacheEnv, resolveZigExe } from '../../compiler/tsfg-paths.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
-const ZIG = process.env.TSFG_ZIG ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\zig\\zig.exe';
-const CLI_EXE = path.join('E:\\tsfg-temp', 'r10-cli-bin', 'tsfg-r10-ecs.exe');
+const ZIG = resolveZigExe();
+const CLI_EXE = path.join(resolveTempDir('r10-cli-bin'), 'tsfg-r10-ecs.exe');
 
 function zigEnv() {
-  return {
-    ...process.env,
-    TEMP: 'E:\\tsfg-temp',
-    TMP: 'E:\\tsfg-temp',
-    ZIG_LOCAL_CACHE_DIR: 'E:\\tsfg-cache\\zig-local',
-    ZIG_GLOBAL_CACHE_DIR: 'E:\\tsfg-cache\\zig-global',
-  };
+  return resolveZigCacheEnv();
 }
 
 test('R10 @component DataLayout Reflection, .tmeta RF-01 Digest, Read/Write Conflict Graph, Wave Scheduler & Illegal Kernel Rejection', () => {
@@ -108,4 +106,35 @@ test('R10 16,384-Entity 3-Way Bit-Exact Equivalence (Scalar Oracle === Batch SIM
   assert.equal(metrics.bitExactMismatches, 0, 'Scalar Oracle, Batch SIMD VM, and AOT <4 x float> DLL MUST match bit-for-bit!');
   assert.ok(metrics.batchStolen > 0, 'Batch SIMD work-stealing must execute across worker threads');
   assert.ok(metrics.aotStolen > 0, 'AOT vectorized work-stealing must execute across worker threads');
+});
+
+test('R10 Source-Driven @component/@system Extraction & Query-Driven Dynamic Vectorized DLL + PDB', async () => {
+  const tsSrc = `
+@component
+export class Transform {
+  x: f32 = 0;
+  y: f32 = 0;
+}
+@component
+export class Impulse {
+  dx: f32 = 0;
+  dy: f32 = 0;
+}
+@system
+export function applyImpulse(t: Write<Transform>, imp: Read<Impulse>): void {}
+`;
+  const extracted = extractEcsFromTsSource(tsSrc);
+  assert.equal(extracted.components.length, 2);
+  assert.equal(extracted.systems.length, 1);
+  const schemas = compileComponentSchemas(extracted.components);
+  const graph = analyzeQueryConflictGraph(extracted.systems, schemas);
+  assert.deepEqual(graph.waves, [['applyImpulse']]);
+
+  const dynDll = await compileDynamicEcsKernelDll(
+    { symbolName: 'tsfg_apply_impulse_vec4', op: 'scale_add_1d' },
+    path.join(resolveTempDir('r10-dyn-dll')),
+    { emitPdb: true },
+  );
+  assert.ok(existsSync(dynDll.dllPath));
+  assert.ok(dynDll.pdbPath && existsSync(dynDll.pdbPath));
 });

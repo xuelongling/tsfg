@@ -28,6 +28,11 @@ pub const Tag = enum(u16) {
     closure = 6, // payload = closure_id (1-based)
     array = 7, // payload = array_id (1-based)
     span = 8, // payload = span_token (1-based) — non-escaping!
+    string = 9, // payload = string_id (1-based index into Engine.strings)
+    i64 = 10,
+    u32 = 11,
+    u64 = 12,
+    f32 = 13,
 };
 
 pub const TaggedValue = extern struct {
@@ -139,6 +144,7 @@ pub const Engine = struct {
     closures: std.ArrayListUnmanaged(ClosureRecord) = .empty,
     arrays: std.ArrayListUnmanaged(ArrayRecord) = .empty,
     spans: std.ArrayListUnmanaged(SpanRecord) = .empty,
+    strings: std.ArrayListUnmanaged([]u16) = .empty,
     globals: [64]TaggedValue = [_]TaggedValue{TaggedValue.undef()} ** 64,
     global_init: [64]bool = [_]bool{false} ** 64,
     // Request state
@@ -187,6 +193,8 @@ pub const Engine = struct {
         }
         self.arrays.deinit(self.allocator);
         self.spans.deinit(self.allocator);
+        for (self.strings.items) |s| self.allocator.free(s);
+        self.strings.deinit(self.allocator);
         self.classes.deinit(self.allocator);
         self.heap.deinit() catch {};
         self.allocator.destroy(self);
@@ -705,14 +713,103 @@ pub const Engine = struct {
         if (a.tag != b.tag) return false;
         return switch (@as(Tag, @enumFromInt(a.tag))) {
             .@"undefined", .@"null" => true,
-            .bool, .i32, .closure, .array, .span => a.payload == b.payload,
+            .bool, .i32, .i64, .u32, .u64, .closure, .array, .span => a.payload == b.payload,
+            .f32 => {
+                const fa: f32 = @bitCast(@as(u32, @truncate(a.payload)));
+                const fb: f32 = @bitCast(@as(u32, @truncate(b.payload)));
+                return fa == fb;
+            },
             .f64 => {
                 const fa: f64 = @bitCast(a.payload);
                 const fb: f64 = @bitCast(b.payload);
                 return fa == fb; // IEEE: -0.0 == +0.0 true, NaN == NaN false
             },
             .ref => self.objSame(a.payload, b.payload),
+            .string => {
+                if (a.payload == b.payload) return true;
+                if (a.payload == 0 or b.payload == 0 or a.payload > self.strings.items.len or b.payload > self.strings.items.len) return false;
+                return std.mem.eql(u16, self.strings.items[@intCast(a.payload - 1)], self.strings.items[@intCast(b.payload - 1)]);
+            },
         };
+    }
+
+    // ---- Lossless UTF-16 Strings (incl. lone surrogates) ----
+    pub fn strFromU16(self: *Engine, units: []const u16) u64 {
+        if (self.isAborted()) return 0;
+        const copy = self.allocator.dupe(u16, units) catch {
+            self.setTrap(.oom);
+            return 0;
+        };
+        self.strings.append(self.allocator, copy) catch {
+            self.allocator.free(copy);
+            self.setTrap(.oom);
+            return 0;
+        };
+        return @intCast(self.strings.items.len);
+    }
+
+    pub fn strLen(self: *Engine, id: u64) u32 {
+        if (self.isAborted()) return 0;
+        if (id == 0 or id > self.strings.items.len) {
+            self.setTrap(.invalid_handle);
+            return 0;
+        }
+        return @intCast(self.strings.items[@intCast(id - 1)].len);
+    }
+
+    pub fn strConcat(self: *Engine, a_id: u64, b_id: u64) u64 {
+        if (self.isAborted()) return 0;
+        if (a_id == 0 or b_id == 0 or a_id > self.strings.items.len or b_id > self.strings.items.len) {
+            self.setTrap(.invalid_handle);
+            return 0;
+        }
+        const sa = self.strings.items[@intCast(a_id - 1)];
+        const sb = self.strings.items[@intCast(b_id - 1)];
+        const joined = self.allocator.alloc(u16, sa.len + sb.len) catch {
+            self.setTrap(.oom);
+            return 0;
+        };
+        @memcpy(joined[0..sa.len], sa);
+        @memcpy(joined[sa.len..], sb);
+        self.strings.append(self.allocator, joined) catch {
+            self.allocator.free(joined);
+            self.setTrap(.oom);
+            return 0;
+        };
+        return @intCast(self.strings.items.len);
+    }
+
+    pub fn strSlice(self: *Engine, id: u64, start_i: i32, end_i: i32) u64 {
+        if (self.isAborted()) return 0;
+        if (id == 0 or id > self.strings.items.len) {
+            self.setTrap(.invalid_handle);
+            return 0;
+        }
+        const s = self.strings.items[@intCast(id - 1)];
+        const len_i: i64 = @intCast(s.len);
+        const raw_s: i64 = if (start_i < 0) @max(len_i + start_i, 0) else @min(@as(i64, start_i), len_i);
+        const raw_e: i64 = if (end_i < 0) @max(len_i + end_i, 0) else @min(@as(i64, end_i), len_i);
+        const lo: usize = @intCast(raw_s);
+        const hi: usize = if (raw_e > raw_s) @intCast(raw_e) else lo;
+        return self.strFromU16(s[lo..hi]);
+    }
+
+    pub fn strCharCodeAt(self: *Engine, id: u64, idx: i32) i32 {
+        if (self.isAborted()) return -1;
+        if (id == 0 or id > self.strings.items.len) {
+            self.setTrap(.invalid_handle);
+            return -1;
+        }
+        const s = self.strings.items[@intCast(id - 1)];
+        if (idx < 0 or @as(usize, @intCast(idx)) >= s.len) return -1;
+        return @intCast(s[@intCast(idx)]);
+    }
+
+    pub fn strGetU16(self: *const Engine, id: u64, idx: u32) u16 {
+        if (id == 0 or id > self.strings.items.len) return 0;
+        const s = self.strings.items[@intCast(id - 1)];
+        if (idx >= s.len) return 0;
+        return s[idx];
     }
 
     // ---- M21 / M32: Language Exceptions vs Request Traps ----
@@ -1209,4 +1306,24 @@ export fn tsfg_eng_read_elem_payload(e: ?*Engine, recv_tag: u16, recv_id: u64, i
     if (recv_tag == @intFromEnum(Tag.array)) return eng.arrayGet(recv_id, idx).payload;
     eng.setTrap(.invalid_handle);
     return 0;
+}
+export fn tsfg_eng_str_from_u16(e: ?*Engine, ptr: ?[*]const u16, len: u32) u64 {
+    const eng = e orelse return 0;
+    if (len == 0 or ptr == null) return eng.strFromU16(&.{});
+    return eng.strFromU16(ptr.?[0..len]);
+}
+export fn tsfg_eng_str_len(e: ?*Engine, id: u64) u32 {
+    return if (e) |eng| eng.strLen(id) else 0;
+}
+export fn tsfg_eng_str_concat(e: ?*Engine, a: u64, b: u64) u64 {
+    return if (e) |eng| eng.strConcat(a, b) else 0;
+}
+export fn tsfg_eng_str_slice(e: ?*Engine, id: u64, start: i32, end: i32) u64 {
+    return if (e) |eng| eng.strSlice(id, start, end) else 0;
+}
+export fn tsfg_eng_str_char_code_at(e: ?*Engine, id: u64, idx: i32) i32 {
+    return if (e) |eng| eng.strCharCodeAt(id, idx) else -1;
+}
+export fn tsfg_eng_str_get_u16(e: ?*const Engine, id: u64, idx: u32) u16 {
+    return if (e) |eng| eng.strGetU16(id, idx) else 0;
 }

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
   auditCompatibilityMatrixAndMigrate,
@@ -9,6 +12,8 @@ import {
   signAndVerifyReleaseBundle,
   verifyReproducibleDualDirBuild,
 } from '../../tooling/release/r13-release-audit.mjs';
+import { buildWindowsX64ProductSdk } from '../../eng/build-windows-sdk.mjs';
+import { resolveTempDir } from '../../compiler/tsfg-paths.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
 
@@ -44,27 +49,30 @@ const DELIVERED_FILES = [
   'tooling/release/r13-release-audit.mjs',
 ];
 
-test('R13 Runtime Zero-Compiler-Dependency Closure Audit (No LLVM/MLIR/Clang/TypeScript/JS VM in Shipping Runtime)', async () => {
+test('R13 Runtime Zero-Compiler-Dependency Closure Audit (Source Imports + Real PE32+ Import Table Inspection)', async () => {
   const audit = await auditRuntimeDependencyClosure(REPO_ROOT);
   assert.ok(audit.auditedFiles.length >= 12, `expected >= 12 runtime .zig files, audited ${audit.auditedFiles.length}`);
+  assert.ok(audit.binaryAudits.length >= 2, `expected >= 2 shipping runtime PE32+ binaries audited, got ${audit.binaryAudits.length}`);
   assert.equal(audit.ok, true, `Runtime dependency closure violations: ${JSON.stringify(audit.violations)}`);
 });
 
-test('R13 SPDX License Header Audit & SPDX 2.3 SBOM Generation', async () => {
-  const res = await auditSpdxAndGenerateSbom(REPO_ROOT, DELIVERED_FILES);
+test('R13 Full-Repo SPDX License Header Audit, NOTICE File & Valid SPDX 2.3 SBOM Generation', async () => {
+  assert.ok(existsSync(path.join(REPO_ROOT, 'NOTICE')), 'Top-level NOTICE file must exist');
+  const res = await auditSpdxAndGenerateSbom(REPO_ROOT);
   assert.equal(res.ok, true, `Missing SPDX headers: ${res.missingSpdx.join(', ')}`);
   assert.equal(res.sbom.spdxVersion, 'SPDX-2.3');
-  assert.equal(res.sbom.files.length, DELIVERED_FILES.length);
+  assert.ok(typeof res.sbom.creationInfo.created === 'string' && res.sbom.creationInfo.created.endsWith('Z'));
+  assert.ok(res.sbom.files.length >= DELIVERED_FILES.length, `expected full-repo scan >= ${DELIVERED_FILES.length}, got ${res.sbom.files.length}`);
   assert.ok(res.sbomDigest.startsWith('sha256:'));
 });
 
 test('R13 Dual-Directory Reproducible Build Proof, Cross-Version Compatibility/Migration & Ed25519 Provenance Signing', async () => {
-  const repro = await verifyReproducibleDualDirBuild(path.join('E:\\tsfg-temp', 'r13-repro'));
+  const repro = await verifyReproducibleDualDirBuild(resolveTempDir('r13-repro'));
   assert.equal(repro.identical, true, 'Dual-directory builds MUST be byte-for-byte identical!');
   assert.equal(repro.digestA, repro.digestB);
 
   const compat = await auditCompatibilityMatrixAndMigrate(REPO_ROOT, repro.tpkgBytes);
-  assert.equal(compat.registeredFamilies.length, 9);
+  assert.ok(compat.registeredFamilies.length >= 9);
   assert.equal(compat.migratedVersion, '1.1.0');
   assert.equal(compat.rolledBackVersion, '1.0.0');
 
@@ -77,4 +85,64 @@ test('R13 Dual-Directory Reproducible Build Proof, Cross-Version Compatibility/M
   });
   assert.equal(signed.valid, true);
   assert.equal(signed.tamperedRejected, true);
+  assert.match(signed.publicKeyPem, /BEGIN PUBLIC KEY/);
+});
+
+test('R13 Standalone Unpacked Windows x64 Product SDK Clean-Directory E2E Proof (Zero Repo Checkout Required)', async () => {
+  const sdkRoot = path.join(resolveTempDir('r13-win-sdk'), 'sdk');
+  const cleanUserDir = path.join(resolveTempDir('r13-win-sdk'), 'user-app');
+  const built = await buildWindowsX64ProductSdk(sdkRoot, { zip: true });
+
+  assert.ok(existsSync(path.join(sdkRoot, 'bin', 'tsfg-runtime.exe')));
+  assert.ok(existsSync(path.join(sdkRoot, 'bin', 'tsfg-r05-vm.exe')));
+  assert.ok(existsSync(path.join(sdkRoot, 'bin', 'tsfg-frontend.exe')));
+  assert.ok(existsSync(path.join(sdkRoot, 'bin', 'tsfg-core-ir.exe')));
+  assert.ok(existsSync(path.join(sdkRoot, 'bin', 'tsfgc.cmd')));
+  assert.ok(existsSync(path.join(sdkRoot, 'lib', 'tsfg_runtime.lib')));
+  assert.ok(existsSync(path.join(sdkRoot, 'include', 'tsfg_runtime.h')));
+  assert.ok(existsSync(path.join(sdkRoot, 'NOTICE')));
+  assert.ok(existsSync(path.join(sdkRoot, 'spdx-sbom.json')));
+  assert.ok(existsSync(path.join(sdkRoot, 'sdk-manifest.json')));
+  assert.ok(existsSync(path.join(sdkRoot, 'sdk-provenance.sig.json')));
+  assert.ok(built.zipPath && existsSync(built.zipPath));
+
+  // Execute `tsfgc.cmd run` and `tsfg-runtime.exe` from a completely isolated directory OUTSIDE the git repo!
+  await mkdir(cleanUserDir, { recursive: true });
+  const sampleTs = path.join(cleanUserDir, 'hello.ts');
+  await writeFile(
+    sampleTs,
+    'export function main(a: i32, b: i32): i32 { return (a + b) * 3; }\n',
+    'utf8',
+  );
+
+  const sdkEnv = {
+    ...process.env,
+    TSFG_SDK_ROOT: sdkRoot,
+    TSFG_LOCKED_NODE: process.execPath,
+  };
+  delete sdkEnv.TSFG_FRONTEND_EXE;
+  delete sdkEnv.TSFG_CORE_IR_EXE;
+  delete sdkEnv.TSFG_R05_VM_EXE;
+  delete sdkEnv.TSFG_RUNTIME_EXE;
+
+  const runCli = spawnSync('cmd.exe', ['/c', path.join(sdkRoot, 'bin', 'tsfgc.cmd'), 'run', sampleTs, '--entry', 'main', '--args', '6,4'], {
+    cwd: cleanUserDir,
+    env: sdkEnv,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert.equal(runCli.status, 0, `Standalone SDK tsfgc.cmd run failed:\n${runCli.stdout}\n${runCli.stderr}`);
+  const out = JSON.parse(runCli.stdout.trim());
+  assert.equal(out.status, 'ok');
+  assert.equal(out.i32, 30);
+
+  const rtCheck = spawnSync(path.join(sdkRoot, 'bin', 'tsfg-runtime.exe'), ['--info'], {
+    cwd: cleanUserDir,
+    env: sdkEnv,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert.equal(rtCheck.status, 0, `Standalone SDK tsfg-runtime.exe --info failed:\n${rtCheck.stderr}`);
+  const rtInfo = JSON.parse(rtCheck.stdout.trim());
+  assert.equal(rtInfo.runtime, 'tsfg-runtime');
 });

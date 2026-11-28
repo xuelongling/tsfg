@@ -91,6 +91,27 @@ const OP = Object.freeze({
   gt_dyn: 81,
   ge_dyn: 82,
   neg_dyn: 83,
+  const_i64: 84,
+  const_u32: 85,
+  const_u64: 86,
+  const_f32: 87,
+  add_i64: 88,
+  sub_i64: 89,
+  mul_i64: 90,
+  div_i64: 91,
+  rem_i64: 92,
+  lt_i64: 93,
+  le_i64: 94,
+  gt_i64: 95,
+  ge_i64: 96,
+  div_u32: 97,
+  rem_u32: 98,
+  lt_u32: 99,
+  le_u32: 100,
+  gt_u32: 101,
+  ge_u32: 102,
+  f32_round: 103,
+  int_wrap: 104,
 });
 
 function sha256Raw(input) {
@@ -176,7 +197,7 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
   };
 
   const fnIdxById = new Map();
-  let initFnIndex = null;
+  const initFnsRaw = [];
   for (let i = 0; i < mod.functions.length; i++) {
     fnIdxById.set(mod.functions[i].functionId, i);
     if (
@@ -184,9 +205,28 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
       mod.functions[i].role === 'module-initializer' ||
       mod.functions[i].role === 'module-initialization'
     ) {
-      initFnIndex = i;
+      initFnsRaw.push({ idx: i, fn: mod.functions[i] });
     }
   }
+  // Topological multi-module initialization order (dependencies initialized before importers)
+  const initFnIndices = [];
+  if (mod.hir?.modules && initFnsRaw.length > 1) {
+    const byPath = new Map(initFnsRaw.map((e) => [e.fn.sourcePath, e.idx]));
+    const modByPath = new Map(mod.hir.modules.map((m) => [m.sourcePath, m]));
+    const visited = new Set();
+    const visit = (p) => {
+      if (!p || visited.has(p)) return;
+      visited.add(p);
+      for (const imp of modByPath.get(p)?.imports ?? []) {
+        if (imp.sourcePath) visit(imp.sourcePath);
+      }
+      if (byPath.has(p)) initFnIndices.push(byPath.get(p));
+    };
+    for (const e of initFnsRaw) visit(e.fn.sourcePath);
+  } else {
+    for (const e of initFnsRaw) initFnIndices.push(e.idx);
+  }
+  const initFnIndex = initFnIndices.length > 0 ? initFnIndices[0] : null;
 
   // Compute maximum field count across all classes so dynamic subclass allocation via `new_obj_dyn` always fits!
   let maxClassFields = 1;
@@ -210,12 +250,17 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
       const r = nextReg++;
       regMap.set(p.reg, r);
       const pt = fn.paramTypes[pi] ?? p.type ?? '';
-      if (pt.includes('f64') || pt.includes('float')) regKind.set(r, 'f64');
+      if (pt.includes('f32')) regKind.set(r, 'f32');
+      else if (pt.includes('f64') || pt.includes('float')) regKind.set(r, 'f64');
+      else if (pt.includes('i64') || pt.includes('isize')) regKind.set(r, 'i64');
+      else if (pt.includes('u64') || pt.includes('usize')) regKind.set(r, 'u64');
+      else if (pt.includes('u32')) regKind.set(r, 'u32');
       else if (pt.includes('string')) regKind.set(r, 'str');
       else if (pt.includes('union') || pt.includes('any')) regKind.set(r, 'dyn');
       else regKind.set(r, 'i32');
     }
     const paramCount = entryParams.length;
+    const localSpanRegs = new Set();
 
     const allocReg = (ssaName) => {
       if (ssaName && regMap.has(ssaName)) return regMap.get(ssaName);
@@ -294,8 +339,23 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
           emit(OP.fuel, { a: ev, start: anc.start, end: anc.end });
         } else if (n === 'tsfg_program.constant') {
           const dst = allocReg(op.result);
-          regKind.set(dst, 'i32');
-          emit(OP.const_i32, { dst, imm32: Number(p.decimal ?? p.value ?? 0) | 0, start: anc.start, end: anc.end });
+          const scalarName = mod.typesById.get(op.viewType)?.name ?? 'i32';
+          const decStr = String(p.decimal ?? p.value ?? '0');
+          if (scalarName === 'i64' || scalarName === 'isize') {
+            regKind.set(dst, 'i64');
+            const idx = internF64(BigInt.asUintN(64, BigInt(decStr)));
+            emit(OP.const_i64, { dst, imm32: idx, start: anc.start, end: anc.end });
+          } else if (scalarName === 'u64' || scalarName === 'usize') {
+            regKind.set(dst, 'u64');
+            const idx = internF64(BigInt.asUintN(64, BigInt(decStr)));
+            emit(OP.const_u64, { dst, imm32: idx, start: anc.start, end: anc.end });
+          } else if (scalarName === 'u32') {
+            regKind.set(dst, 'u32');
+            emit(OP.const_u32, { dst, imm32: Number(BigInt.asIntN(32, BigInt(decStr))), start: anc.start, end: anc.end });
+          } else {
+            regKind.set(dst, scalarName === 'i8' || scalarName === 'u8' || scalarName === 'i16' || scalarName === 'u16' ? scalarName : 'i32');
+            emit(OP.const_i32, { dst, imm32: Number(BigInt.asIntN(32, BigInt(decStr))), start: anc.start, end: anc.end });
+          }
         } else if (n === 'tsfg_program.boolean') {
           emit(OP.const_bool, { dst: allocReg(op.result), imm32: p.value ? 1 : 0, start: anc.start, end: anc.end });
         } else if (n === 'tsfg_program.undefined') {
@@ -304,9 +364,17 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
           emit(OP.const_null, { dst: allocReg(op.result), start: anc.start, end: anc.end });
         } else if (n === 'tsfg_program.floating') {
           const dst = allocReg(op.result);
-          regKind.set(dst, 'f64');
-          const idx = internF64(BigInt('0x' + (p.bits ?? '0')));
-          emit(OP.const_f64, { dst, imm32: idx, start: anc.start, end: anc.end });
+          const bitsHex = String(p.bits ?? '0');
+          const scalarName = mod.typesById.get(op.viewType)?.name ?? (bitsHex.length === 8 ? 'f32' : 'f64');
+          if (scalarName === 'f32' || bitsHex.length === 8) {
+            regKind.set(dst, 'f32');
+            const raw32 = Number(BigInt.asIntN(32, BigInt('0x' + bitsHex)));
+            emit(OP.const_f32, { dst, imm32: raw32, start: anc.start, end: anc.end });
+          } else {
+            regKind.set(dst, 'f64');
+            const idx = internF64(BigInt('0x' + bitsHex));
+            emit(OP.const_f64, { dst, imm32: idx, start: anc.start, end: anc.end });
+          }
         } else if (n === 'tsfg_program.string' || n === 'tsfg_program.string_literal') {
           const dst = allocReg(op.result);
           regKind.set(dst, 'str');
@@ -361,7 +429,14 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
           const src = allocReg(op.operands[0]);
           const dst = allocReg(op.result);
           if (regKind.has(src)) regKind.set(dst, regKind.get(src));
-          emit(OP.mov, { dst, a: src, start: anc.start, end: anc.end });
+          const targetTy = p.target ? mod.typesById.get(p.target) : null;
+          const isNonNullView = n === 'tsfg_program.view' && targetTy && targetTy.kind !== 'union' && targetTy.kind !== 'unknown' && targetTy.kind !== 'undefined' && targetTy.kind !== 'null';
+          if (isNonNullView) {
+            if (targetTy.kind === 'scalar') regKind.set(dst, targetTy.name);
+            emit(OP.assert_non_null, { dst, a: src, start: anc.start, end: anc.end });
+          } else {
+            emit(OP.mov, { dst, a: src, start: anc.start, end: anc.end });
+          }
         } else if (n === 'tsfg_program.value_copy') {
           const ty = mod.typesById.get(p.type);
           const src = allocReg(op.operands[0]);
@@ -396,11 +471,29 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
           const d = allocReg(op.result);
           const lk = regKind.get(l);
           const rk = regKind.get(r);
-          const pureI32 = lk === 'i32' && rk === 'i32';
+          const outScalar = mod.typesById.get(op.viewType)?.name ?? null;
+          const isI64 = lk === 'i64' || rk === 'i64' || outScalar === 'i64' || outScalar === 'isize';
+          const isU32 = (lk === 'u32' || rk === 'u32' || outScalar === 'u32') && !isI64;
+          const isF32 = (lk === 'f32' || rk === 'f32' || outScalar === 'f32') && lk !== 'f64' && rk !== 'f64';
+          const pureI32 = lk === 'i32' && rk === 'i32' && !isI64 && !isU32 && !isF32;
           const oper = p.operator;
 
           if (oper === '===' || oper === '==' || oper === '!==' || oper === '!=') {
             emit(OP.strict_eq, { dst: d, a: l, b: r, imm32: oper.startsWith('!') ? 1 : 0, start: anc.start, end: anc.end });
+          } else if (isI64 && ['+', '-', '*', '/', '%', '<', '<=', '>', '>='].includes(oper)) {
+            const i64Map = {
+              '+': OP.add_i64, '-': OP.sub_i64, '*': OP.mul_i64, '/': OP.div_i64, '%': OP.rem_i64,
+              '<': OP.lt_i64, '<=': OP.le_i64, '>': OP.gt_i64, '>=': OP.ge_i64,
+            };
+            if (['+', '-', '*', '/', '%'].includes(oper)) regKind.set(d, 'i64');
+            emit(i64Map[oper], { dst: d, a: l, b: r, start: anc.start, end: anc.end });
+          } else if (isU32 && ['/', '%', '<', '<=', '>', '>='].includes(oper)) {
+            const u32Map = {
+              '/': OP.div_u32, '%': OP.rem_u32,
+              '<': OP.lt_u32, '<=': OP.le_u32, '>': OP.gt_u32, '>=': OP.ge_u32,
+            };
+            if (oper === '/' || oper === '%') regKind.set(d, 'u32');
+            emit(u32Map[oper], { dst: d, a: l, b: r, start: anc.start, end: anc.end });
           } else if (pureI32 && ['+', '-', '*', '/', '<', '<=', '>', '>='].includes(oper)) {
             const i32Map = {
               '+': OP.add_i32, '-': OP.sub_i32, '*': OP.mul_i32, '/': OP.div_i32,
@@ -413,10 +506,24 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
               '+': OP.add_dyn, '-': OP.sub_dyn, '*': OP.mul_dyn, '/': OP.div_dyn,
               '<': OP.lt_dyn, '<=': OP.le_dyn, '>': OP.gt_dyn, '>=': OP.ge_dyn,
             };
-            if (lk === 'f64' || rk === 'f64') regKind.set(d, 'f64');
-            else if (lk === 'str' || rk === 'str') regKind.set(d, 'str');
-            else regKind.set(d, 'dyn');
-            emit(dynMap[oper], { dst: d, a: l, b: r, start: anc.start, end: anc.end });
+            if (isF32 && ['+', '-', '*', '/'].includes(oper)) {
+              regKind.set(d, 'f32');
+              const tmp = nextReg++;
+              emit(dynMap[oper], { dst: tmp, a: l, b: r, start: anc.start, end: anc.end });
+              emit(OP.f32_round, { dst: d, a: tmp, start: anc.start, end: anc.end });
+            } else {
+              if (lk === 'f64' || rk === 'f64') regKind.set(d, 'f64');
+              else if (lk === 'str' || rk === 'str') regKind.set(d, 'str');
+              else if (isU32) regKind.set(d, 'u32');
+              else regKind.set(d, 'dyn');
+              emit(dynMap[oper], { dst: d, a: l, b: r, start: anc.start, end: anc.end });
+            }
+            if (['+', '-', '*'].includes(oper)) {
+              const wrapCode = { i8: 8, u8: -8, i16: 16, u16: -16, u32: -32 }[outScalar];
+              if (wrapCode !== undefined) {
+                emit(OP.int_wrap, { dst: d, a: d, imm32: wrapCode, start: anc.start, end: anc.end });
+              }
+            }
           } else {
             const intOnlyMap = {
               '%': OP.rem_i32, '&': OP.bit_and, '|': OP.bit_or, '^': OP.bit_xor,
@@ -425,7 +532,7 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
             if (intOnlyMap[oper] === undefined) {
               throw new Error(`r05-lower: unsupported binary op ${oper}`);
             }
-            regKind.set(d, 'i32');
+            regKind.set(d, isU32 ? 'u32' : 'i32');
             emit(intOnlyMap[oper], { dst: d, a: l, b: r, start: anc.start, end: anc.end });
           }
         } else if (n === 'tsfg_program.unary') {
@@ -596,8 +703,10 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
             end: anc.end,
           });
         } else if (n === 'tsfg_program.readspan') {
+          const spDst = allocReg(op.result);
+          localSpanRegs.add(spDst);
           emit(OP.span_new, {
-            dst: allocReg(op.result),
+            dst: spDst,
             a: allocReg(op.operands[0]),
             b: allocReg(op.operands[1]),
             imm32: allocReg(op.operands[2]),
@@ -714,6 +823,11 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
           fixups.push({ opIdx: tBr, targetLabel: op.successors[0] });
         } else if (n === 'func.return') {
           const rv = op.operands.length > 0 ? allocReg(op.operands[0]) : 0xffff;
+          for (const spReg of localSpanRegs) {
+            if (spReg !== rv) {
+              emit(OP.span_release, { a: spReg, start: anc.start, end: anc.end });
+            }
+          }
           emit(OP.ret, { a: rv, start: anc.start, end: anc.end });
         } else if (n === 'tsfg_program.enter_handler' || n === 'tsfg_program.finally_enter') {
           // Structural handler markers
@@ -803,5 +917,5 @@ export function lowerCommonCoreToR05Bytecode(mlirText, opts = {}) {
   for (const [name, fid] of mod.exportsByName.entries()) {
     exportsByName.set(name, fnIdxById.get(fid));
   }
-  return { abiHash, bytes, exportsByName, initFnIndex, functions: compiledFns };
+  return { abiHash, bytes, exportsByName, initFnIndex, initFnIndices, functions: compiledFns };
 }

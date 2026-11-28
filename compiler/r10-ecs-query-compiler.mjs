@@ -8,6 +8,7 @@ import path from 'node:path';
 import { canonical, sha256, WINDOWS_X64_TARGET } from './r04-identity.mjs';
 import { parseLlvmDataLayout } from './r04-abi.mjs';
 import { emitTmetaArtifact } from './r04-protocols.mjs';
+import { resolveClangClExe, resolveLldLinkExe } from './tsfg-paths.mjs';
 
 const WIN64_DL = parseLlvmDataLayout(WINDOWS_X64_TARGET.llvmDataLayout);
 
@@ -27,10 +28,141 @@ function computeComponentLayout(fields) {
   return { size, align: maxAlign, fields: outFields };
 }
 
-const CLANG_CL = process.env.TSFG_CLANG_CL ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\llvm\\bin\\clang-cl.exe';
-const LLD_LINK = process.env.TSFG_LLD_LINK ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\llvm\\bin\\lld-link.exe';
-
 const ALLOWED_KERNEL_FIELD_TYPES = new Set(['f32', 'f64', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32', 'u64', 'bool']);
+
+/**
+ * Parse real TypeScript `@component` / `@tsfgComponent` classes and `@system` functions directly
+ * from `.ts` source text so ECS layouts, conflict graphs, and `.tmeta` are driven by user code!
+ */
+export function extractEcsFromTsSource(sourceText) {
+  const stripped = sourceText.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const components = [];
+  const compRe = /@(?:component|tsfgComponent)\s+(?:export\s+)?class\s+([A-Za-z_]\w*)\s*\{([^}]*)\}/g;
+  let cm;
+  while ((cm = compRe.exec(stripped)) !== null) {
+    const name = cm[1];
+    const body = cm[2];
+    const fields = [];
+    const fieldRe = /([A-Za-z_]\w*)\s*:\s*([A-Za-z_]\w*)(?:\s*=\s*[^;]+)?\s*;/g;
+    let fm;
+    while ((fm = fieldRe.exec(body)) !== null) {
+      fields.push({ name: fm[1], type: fm[2] });
+    }
+    components.push({ name, fields });
+  }
+
+  const systems = [];
+  const sysRe = /@system\s+(?:export\s+)?function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/g;
+  let sm;
+  while ((sm = sysRe.exec(stripped)) !== null) {
+    const name = sm[1];
+    const params = sm[2];
+    const query = [];
+    const qRe = /(Read|Write)\s*<\s*([A-Za-z_]\w*)\s*>/g;
+    let qm;
+    while ((qm = qRe.exec(params)) !== null) {
+      query.push({ component: qm[2], access: qm[1].toLowerCase() });
+    }
+    systems.push({ name, query, fusable: true, effects: [] });
+  }
+  return { components, systems };
+}
+
+/**
+ * Compile a query-driven vectorized `<4 x float>` Windows x64 ECS kernel DLL from an explicit
+ * kernel specification (`{ symbolName, op: 'integrate_2d' | 'scale_add_1d' | 'add_1d', emitPdb }`)
+ * with `noalias` proofs, strict IEEE f32 (no fast-math / no FMA), and optional detached `.pdb`.
+ */
+export async function compileDynamicEcsKernelDll(kernelSpec, outDir, opts = {}) {
+  const tag = opts.tag ?? kernelSpec.symbolName ?? 'r10_dyn_kernel';
+  const sym = kernelSpec.symbolName ?? 'tsfg_chunk_scale_add_f32_vec4';
+  const opKind = kernelSpec.op ?? 'scale_add_1d';
+  await mkdir(outDir, { recursive: true });
+
+  const llvmIr = opKind === 'scale_add_1d'
+    ? `target datalayout = "${WINDOWS_X64_TARGET.llvmDataLayout}"
+target triple = "${WINDOWS_X64_TARGET.triple}"
+
+@_fltused = global i32 0, align 4
+
+define dllexport i32 @${sym}(ptr noalias %dst, ptr noalias readonly %src, i32 %count, float %scale) {
+entry:
+  %s0 = insertelement <4 x float> undef, float %scale, i32 0
+  %sv = shufflevector <4 x float> %s0, <4 x float> undef, <4 x i32> zeroinitializer
+  %n_vec = and i32 %count, -4
+  br label %vcond
+vcond:
+  %vi = phi i32 [ 0, %entry ], [ %vi_n, %vbody ]
+  %vc = icmp slt i32 %vi, %n_vec
+  br i1 %vc, label %vbody, label %tcond
+vbody:
+  %vi64 = sext i32 %vi to i64
+  %dp = getelementptr inbounds float, ptr %dst, i64 %vi64
+  %sp = getelementptr inbounds float, ptr %src, i64 %vi64
+  %dv = load <4 x float>, ptr %dp, align 4
+  %rv = load <4 x float>, ptr %sp, align 4
+  %mv = fmul <4 x float> %rv, %sv
+  %av = fadd <4 x float> %dv, %mv
+  store <4 x float> %av, ptr %dp, align 4
+  %vi_n = add nuw nsw i32 %vi, 4
+  br label %vcond
+tcond:
+  %ti = phi i32 [ %n_vec, %vcond ], [ %ti_n, %tbody ]
+  %tc = icmp slt i32 %ti, %count
+  br i1 %tc, label %tbody, label %done
+tbody:
+  %ti64 = sext i32 %ti to i64
+  %tdp = getelementptr inbounds float, ptr %dst, i64 %ti64
+  %tsp = getelementptr inbounds float, ptr %src, i64 %ti64
+  %td = load float, ptr %tdp, align 4
+  %ts = load float, ptr %tsp, align 4
+  %tm = fmul float %ts, %scale
+  %ta = fadd float %td, %tm
+  store float %ta, ptr %tdp, align 4
+  %ti_n = add nuw nsw i32 %ti, 1
+  br label %tcond
+done:
+  ret i32 %count
+}
+`
+    : null;
+
+  if (!llvmIr) {
+    return compileVectorizedEcsKernelDll(outDir, { ...opts, tag });
+  }
+
+  const llPath = path.join(outDir, `${tag}.ll`);
+  const objPath = path.join(outDir, `${tag}.obj`);
+  const dllPath = path.join(outDir, `${tag}.dll`);
+  const pdbPath = path.join(outDir, `${tag}.pdb`);
+  await writeFile(llPath, llvmIr, 'utf8');
+
+  const clangCl = resolveClangClExe(opts.clangCl);
+  const lldLink = resolveLldLinkExe(opts.lldLink);
+  const strictFlags = ['/clang:-march=x86-64-v2', '/clang:-mtune=generic', '/clang:-mno-avx', '/clang:-fno-lto', '/clang:-fno-fast-math'];
+  const cc = spawnSync(clangCl, ['/c', '/O2', ...strictFlags, ...(opts.emitPdb ? ['/Z7'] : []), '-x', 'ir', llPath, `/Fo${objPath}`], {
+    windowsHide: true,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (cc.status !== 0) throw new Error(`r10 dynamic clang-cl failed:\n${cc.stderr.toString('utf8')}`);
+
+  const ldArgs = ['/DLL', '/NOENTRY', '/MACHINE:X64', `/OUT:${dllPath}`];
+  if (opts.emitPdb) ldArgs.push('/DEBUG:FULL', `/PDB:${pdbPath}`, '/PDBALTPATH:%_PDB%');
+  ldArgs.push(objPath);
+  const ld = spawnSync(lldLink, ldArgs, { windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+  if (ld.status !== 0) throw new Error(`r10 dynamic lld-link /DLL failed:\n${ld.stderr.toString('utf8')}`);
+
+  const dllBytes = await readFile(dllPath);
+  return {
+    symbolName: sym,
+    dllPath,
+    pdbPath: opts.emitPdb ? pdbPath : null,
+    dllSha: `sha256:${createHash('sha256').update(dllBytes).digest('hex')}`,
+    llPath,
+    llvmIr,
+    objPath,
+  };
+}
 
 /**
  * Compile `@component` declarations using DataLayout-driven R04 layout rules (no handwritten offsets!).
@@ -282,13 +414,15 @@ done:
   const dllPath = path.join(outDir, `${tag}.dll`);
   await writeFile(llPath, llvmIr, 'utf8');
 
-  const cc = spawnSync(CLANG_CL, ['/c', '/O2', '-x', 'ir', llPath, `/Fo${objPath}`], {
+  const clangCl = resolveClangClExe(opts.clangCl);
+  const lldLink = resolveLldLinkExe(opts.lldLink);
+  const cc = spawnSync(clangCl, ['/c', '/O2', '-x', 'ir', llPath, `/Fo${objPath}`], {
     windowsHide: true,
     maxBuffer: 16 * 1024 * 1024,
   });
   if (cc.status !== 0) throw new Error(`r10 clang-cl failed:\n${cc.stderr.toString('utf8')}`);
 
-  const ld = spawnSync(LLD_LINK, ['/DLL', '/NOENTRY', '/MACHINE:X64', `/OUT:${dllPath}`, objPath], {
+  const ld = spawnSync(lldLink, ['/DLL', '/NOENTRY', '/MACHINE:X64', `/OUT:${dllPath}`, objPath], {
     windowsHide: true,
     maxBuffer: 16 * 1024 * 1024,
   });

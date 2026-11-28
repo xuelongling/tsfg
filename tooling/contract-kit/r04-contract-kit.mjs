@@ -92,10 +92,12 @@ export function generateDeterministicFuzzMutations(seedBytes, count = 24) {
   return mutations;
 }
 
+import { resolveTempDir } from '../../compiler/tsfg-paths.mjs';
+
 export async function runContractKit({
   fixtureRoot = path.join(REPO_ROOT, 'tests/fixtures/r04'),
   repoRoot = REPO_ROOT,
-  tempDir = 'E:\\tsfg-temp\\r04-rf01',
+  tempDir = resolveTempDir('r04-rf01'),
   validatorExe = null,
   vmExe = null,
 } = {}) {

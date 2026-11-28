@@ -1,18 +1,27 @@
 // SPDX-License-Identifier: MIT
-// R12 Project Build Engine (`tsfgc` project/package workflow):
+// R12 Production Project Build Engine (`tsfgc` project/package workflow):
 //   - `tsfg.project.json` manifest loading & strict module resolution (rejects `.js`/`.mjs`/`any`/`eval`)
+//   - REAL TypeScript `.ts` compilation through Go Frontend -> HIR -> C++ MLIR Core IR -> `TSFGR05B` `.tbc`
+//     (and optional Windows x64 AOT `.exe`/`.dll` + `.pdb`!)
+//   - Automatic `@component`/`@system` extraction from `.ts` source when not overridden
 //   - Content-addressed incremental build cache (proven byte-identical to clean build!)
 //   - Local precompiled `.tpkg` package format (consumable completely detached from original `.ts` sources;
-//     strictly rejects tampered payloads, wrong target, or incompatible ABI/schema!)
+//     injects dependency `.d.ts` declarations into downstream builds; rejects tampering/target/ABI mismatch)
 //   - Integrated Zig `extern` ABI binding generation (`r04-bindgen.mjs`)
-import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { canonical, contractSetId, sha256, WINDOWS_X64_TARGET } from '../compiler/r04-identity.mjs';
 import { emitAbiArtifact, validateAbiArtifact } from '../compiler/r04-abi.mjs';
 import { generateTsDeclarations, generateZigBindings } from '../compiler/r04-bindgen.mjs';
 import { validateTmetaArtifact } from '../compiler/r04-protocols.mjs';
-import { analyzeQueryConflictGraph, compileComponentSchemas, emitEcsTmeta } from '../compiler/r10-ecs-query-compiler.mjs';
+import { compileTsSourceToR05Bytecode } from '../compiler/r05-ts-driver.mjs';
+import { compileTsToWindowsAot } from '../compiler/tsfg-aot-driver.mjs';
+import {
+  analyzeQueryConflictGraph,
+  compileComponentSchemas,
+  emitEcsTmeta,
+  extractEcsFromTsSource,
+} from '../compiler/r10-ecs-query-compiler.mjs';
 import { encodeDialectToR05Bytecode } from './diff-platform/r08-generator.mjs';
 
 const FORBIDDEN_SOURCE_PATTERNS = [
@@ -36,6 +45,17 @@ export function checkSourceTsfgCompliance(filePath, sourceText) {
     }
   }
   return diags;
+}
+
+function extractExportedFunctions(sourceText) {
+  const stripped = sourceText.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const names = [];
+  const re = /\bexport\s+function\s+([A-Za-z_]\w*)\s*\(/g;
+  let m;
+  while ((m = re.exec(stripped)) !== null) {
+    names.push(m[1]);
+  }
+  return [...new Set(names)].sort();
 }
 
 /**
@@ -74,8 +94,6 @@ export function sealLocalPackage(pkgSpec) {
 
 /**
  * Load & strictly verify a local precompiled `.tpkg` package completely detached from source files.
- * Rejects tampered digests, wrong format/version, wrong target, corrupted inner `.tmeta`/`.tsfgabi`,
- * or mismatched `expectedAbiHash` / `expectedContractSetId`.
  */
 export function loadLocalPackage(rawBytes, expected = {}) {
   let env;
@@ -128,6 +146,8 @@ export function loadLocalPackage(rawBytes, expected = {}) {
 /**
  * Build a tsfg project from `tsfg.project.json` with deterministic incremental caching.
  * Clean build and incremental build ALWAYS produce byte-identical artifacts!
+ * Real `.ts` sources compile through the full Go Frontend -> HIR -> Core MLIR -> `TSFGR05B` pipeline
+ * (and optional Windows x64 AOT `.exe`/`.dll` + `.pdb`).
  */
 export async function buildTsfgProject(projectDir, opts = {}) {
   const outDir = opts.outDir ?? path.join(projectDir, 'dist');
@@ -148,11 +168,12 @@ export async function buildTsfgProject(projectDir, opts = {}) {
     if (diags.length > 0) {
       throw new TypeError(`r12-build-diagnostics: ${diags.map((d) => `${d.code}@${d.file}:${d.line}`).join(', ')}`);
     }
-    sources.push({ rel, sha256: sha256(Buffer.from(text, 'utf8')), text });
+    sources.push({ rel, abs, sha256: sha256(Buffer.from(text, 'utf8')), text });
   }
 
-  // 2. Load & verify any precompiled `.tpkg` dependencies (works with ZERO dependency source files!)
+  // 2. Load & verify any precompiled `.tpkg` dependencies (completely detached from dependency sources!)
   const loadedDeps = [];
+  const depDtsFiles = [];
   for (const dep of [...(manifest.dependencies ?? [])].sort((a, b) => a.name.localeCompare(b.name))) {
     const pkgPath = path.isAbsolute(dep.packagePath) ? dep.packagePath : path.resolve(projectDir, dep.packagePath);
     const raw = await readFile(pkgPath);
@@ -160,8 +181,24 @@ export async function buildTsfgProject(projectDir, opts = {}) {
       abiHash: dep.expectedAbiHash,
       contractSetId: contractSetId(),
     });
-    loadedDeps.push({ name: dep.name, digest: loaded.digest, abiHash: loaded.abiHash, exports: loaded.exports });
+    loadedDeps.push({
+      name: dep.name,
+      digest: loaded.digest,
+      abiHash: loaded.abiHash,
+      exports: loaded.exports,
+      dtsDeclarations: loaded.dtsDeclarations,
+    });
+    if (loaded.dtsDeclarations) {
+      depDtsFiles.push({ path: `/src/__tpkg_${dep.name.replace(/[^a-zA-Z0-9_]/g, '_')}.d.ts`, content: loaded.dtsDeclarations });
+    }
   }
+
+  // Auto-extract @component / @system from `.ts` sources when manifest omits them
+  const combinedSource = sources.map((s) => s.text).join('\n');
+  const extractedEcs = extractEcsFromTsSource(combinedSource);
+  const effectiveComponents = manifest.components ?? extractedEcs.components;
+  const effectiveSystems = manifest.systems ?? extractedEcs.systems;
+  const compileRealTs = !manifest.irProgram && sources.length > 0;
 
   // 3. Compute canonical incremental cache key (independent of outDir/cacheDir paths!)
   const buildKey = sha256(
@@ -170,13 +207,15 @@ export async function buildTsfgProject(projectDir, opts = {}) {
         manifest: {
           name: manifest.name,
           version: manifest.version,
-          components: manifest.components ?? [],
-          systems: manifest.systems ?? [],
+          entryFunction: manifest.entryFunction ?? null,
+          components: effectiveComponents,
+          systems: effectiveSystems,
           abiFunctions: manifest.abiFunctions ?? [],
-          irProgram: manifest.irProgram,
+          irProgram: manifest.irProgram ?? null,
+          compileRealTs,
         },
         sources: sources.map((s) => ({ rel: s.rel, sha256: s.sha256 })),
-        deps: loadedDeps,
+        deps: loadedDeps.map((d) => ({ name: d.name, digest: d.digest, abiHash: d.abiHash, exports: d.exports })),
         target: WINDOWS_X64_TARGET,
       }),
     ),
@@ -202,6 +241,8 @@ export async function buildTsfgProject(projectDir, opts = {}) {
           zigBindings: cached.zigBindings,
           dtsDeclarations: cached.dtsDeclarations,
           conflictGraph: cached.conflictGraph,
+          compiledExports: cached.compiledExports ?? [],
+          usedRealTsPipeline: Boolean(cached.usedRealTsPipeline),
         };
       }
     } catch {
@@ -210,9 +251,8 @@ export async function buildTsfgProject(projectDir, opts = {}) {
   }
 
   if (!outputs) {
-    // Compile `@component` schemas + `@system` conflict graph + `.tsfgabi` + `.tmeta` + Zig/TS bindings + `.tbc` + `.tpkg`
-    const schemas = compileComponentSchemas(manifest.components ?? []);
-    const conflictGraph = analyzeQueryConflictGraph(manifest.systems ?? [], schemas);
+    const schemas = compileComponentSchemas(effectiveComponents);
+    const conflictGraph = analyzeQueryConflictGraph(effectiveSystems, schemas);
 
     const abiArtifact = emitAbiArtifact({
       moduleId: sha256(Buffer.from(`mod:${manifest.name}`)),
@@ -230,28 +270,62 @@ export async function buildTsfgProject(projectDir, opts = {}) {
     const zigBindings = generateZigBindings(abiArtifact.payload);
     const dtsDeclarations = generateTsDeclarations(abiArtifact.payload);
 
-    const irProg = manifest.irProgram ?? {
-      name: 'step_frame',
-      returnType: 'i32',
-      ops: [
-        { op: 'tsfg.fuel' },
-        { op: 'tsfg.add_i32', result: 'r0', operands: ['a', 'b'] },
-        { op: 'tsfg.return', operands: ['r0'] },
-      ],
-    };
-    const bcMod = {
-      abiHash,
-      functions: [
-        {
-          functionId: sha256(Buffer.from(`fn:${manifest.name}:${irProg.name}`)),
-          name: irProg.name,
-          returnType: irProg.returnType,
-          params: [{ name: 'a', type: irProg.returnType }, { name: 'b', type: irProg.returnType }],
-          ops: irProg.ops[0]?.op === 'tsfg.fuel' ? irProg.ops : [{ op: 'tsfg.fuel' }, ...irProg.ops],
-        },
-      ],
-    };
-    const bytecodeBytes = encodeDialectToR05Bytecode(bcMod);
+    let bytecodeBytes;
+    let compiledExports = [];
+    let usedRealTsPipeline = false;
+
+    if (compileRealTs) {
+      // REAL TypeScript -> Go Frontend -> HIR -> C++ MLIR Core IR -> TSFGR05B bytecode!
+      const primary = sources[0];
+      const detectedExports = extractExportedFunctions(primary.text);
+      const entryNames = manifest.entryFunction
+        ? [manifest.entryFunction]
+        : detectedExports.length > 0
+          ? detectedExports
+          : ['main'];
+      const additionalFiles = [
+        ...sources.slice(1).map((s) => ({ path: `/src/${s.rel.replace(/\\/g, '/')}`, content: s.text })),
+        ...depDtsFiles,
+      ];
+      const compiled = compileTsSourceToR05Bytecode(primary.text, {
+        filePath: primary.abs,
+        resolveImports: additionalFiles.length === 0,
+        additionalFiles: additionalFiles.length > 0 ? additionalFiles : undefined,
+        entries: entryNames,
+        entry: entryNames[0],
+        abiHash,
+        moduleId: sha256(Buffer.from(`mod:${manifest.name}`)),
+        staticSchemaHash: tmetaArtifact.payload.reflectionDigest,
+        optimize: opts.profile === 'release',
+      });
+      bytecodeBytes = compiled.bytes;
+      compiledExports = [...compiled.exportsByName.keys()].sort();
+      usedRealTsPipeline = true;
+    } else {
+      const irProg = manifest.irProgram ?? {
+        name: 'step_frame',
+        returnType: 'i32',
+        ops: [
+          { op: 'tsfg.fuel' },
+          { op: 'tsfg.add_i32', result: 'r0', operands: ['a', 'b'] },
+          { op: 'tsfg.return', operands: ['r0'] },
+        ],
+      };
+      const bcMod = {
+        abiHash,
+        functions: [
+          {
+            functionId: sha256(Buffer.from(`fn:${manifest.name}:${irProg.name}`)),
+            name: irProg.name,
+            returnType: irProg.returnType,
+            params: [{ name: 'a', type: irProg.returnType }, { name: 'b', type: irProg.returnType }],
+            ops: irProg.ops[0]?.op === 'tsfg.fuel' ? irProg.ops : [{ op: 'tsfg.fuel' }, ...irProg.ops],
+          },
+        ],
+      };
+      bytecodeBytes = encodeDialectToR05Bytecode(bcMod);
+      compiledExports = [irProg.name];
+    }
 
     const pkg = sealLocalPackage({
       name: manifest.name,
@@ -260,7 +334,7 @@ export async function buildTsfgProject(projectDir, opts = {}) {
       abiBytes: abiArtifact.bytes,
       tmetaBytes: tmetaArtifact.bytes,
       bytecodeBytes,
-      exports: [irProg.name, ...schemas.map((s) => s.name)],
+      exports: [...new Set([...compiledExports, ...schemas.map((s) => s.name)])],
       zigBindings,
       dtsDeclarations,
     });
@@ -274,6 +348,8 @@ export async function buildTsfgProject(projectDir, opts = {}) {
       zigBindings,
       dtsDeclarations,
       conflictGraph,
+      compiledExports,
+      usedRealTsPipeline,
     };
 
     await writeFile(
@@ -288,6 +364,8 @@ export async function buildTsfgProject(projectDir, opts = {}) {
         zigBindings: outputs.zigBindings,
         dtsDeclarations: outputs.dtsDeclarations,
         conflictGraph: outputs.conflictGraph,
+        compiledExports: outputs.compiledExports,
+        usedRealTsPipeline: outputs.usedRealTsPipeline,
       }),
       'utf8',
     );
@@ -301,6 +379,8 @@ export async function buildTsfgProject(projectDir, opts = {}) {
     tpkgPath: path.join(outDir, `${manifest.name}.tpkg`),
     zigBindingsPath: path.join(outDir, `${manifest.name}_abi.zig`),
     dtsPath: path.join(outDir, `${manifest.name}.d.ts`),
+    aotPath: null,
+    pdbPath: null,
   };
   await Promise.all([
     writeFile(paths.abiPath, outputs.abiBytes),
@@ -310,6 +390,32 @@ export async function buildTsfgProject(projectDir, opts = {}) {
     writeFile(paths.zigBindingsPath, outputs.zigBindings, 'utf8'),
     writeFile(paths.dtsPath, outputs.dtsDeclarations, 'utf8'),
   ]);
+
+  // Optional native Windows x64 AOT binary + detached PDB emission!
+  let aotArtifact = null;
+  if ((opts.emitAot || manifest.emitAot) && sources.length > 0) {
+    const primary = sources[0];
+    const detectedExports = extractExportedFunctions(primary.text);
+    const entryNames = manifest.entryFunction
+      ? [manifest.entryFunction]
+      : detectedExports.length > 0
+        ? detectedExports
+        : ['main'];
+    const aotMode = opts.aotMode ?? manifest.aotMode ?? 'exe';
+    aotArtifact = await compileTsToWindowsAot(primary.abs, {
+      isFile: true,
+      entries: entryNames,
+      entry: entryNames[0],
+      mode: aotMode,
+      profile: opts.profile ?? 'release',
+      tag: manifest.name,
+      outDir,
+      outPath: path.join(outDir, `${manifest.name}.${aotMode}`),
+      emitPdb: true,
+    });
+    paths.aotPath = aotArtifact.outPath;
+    paths.pdbPath = aotArtifact.pdbPath;
+  }
 
   const outputDigest = sha256(
     Buffer.concat([
@@ -322,6 +428,7 @@ export async function buildTsfgProject(projectDir, opts = {}) {
   );
 
   return {
+    aotArtifact,
     buildKey,
     cacheHit,
     loadedDeps,

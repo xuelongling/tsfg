@@ -277,3 +277,320 @@ export function runCpuGpuReference(mode, a, b) {
   }
   return out;
 }
+
+/**
+ * Compile a real TypeScript `@gpu_kernel` function directly to a validated SPIR-V 1.3 compute shader!
+ * Supports:
+ *   - 2..8 storage buffer parameters (`ReadSpan<f32|i32|u32>`, `Span<f32|i32|u32>`)
+ *   - `const`/`let` scalar locals, `+`, `-`, `*`, `/`, parentheses, numeric literals, `buf[i]` reads
+ *   - `out[i] = <expr>` assignment guarded by `globalId.x < elementCount`
+ *   - Rejects forbidden GPU effects (`gc_ref`, `throw`, `new`, `string`, `any`) statically!
+ */
+export function compileTsGpuKernelToSpirv(sourceText, opts = {}) {
+  const stripped = sourceText.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  if (/\bthrow\b|\bnew\s+[A-Z]|\bas\s+any\b|:\s*any\b|:\s*string\b/.test(stripped)) {
+    throw new TypeError('r11-gpu-illegal-effect: GPU kernel source contains forbidden managed/exception/dynamic construct');
+  }
+
+  const fnMatch = stripped.match(/@gpu_kernel\s+(?:export\s+)?function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)[^{]*\{([\s\S]*)\}/);
+  if (!fnMatch) {
+    throw new TypeError('r11-gpu-parse: expected `@gpu_kernel function name(...) { ... }`');
+  }
+  const kernelName = fnMatch[1];
+  const rawParams = fnMatch[2].split(',').map((s) => s.trim()).filter(Boolean);
+  const body = fnMatch[3];
+
+  const bindings = [];
+  for (const rp of rawParams) {
+    const pm = rp.match(/^([A-Za-z_]\w*)\s*:\s*(ReadSpan|Span)\s*<\s*(f32|i32|u32)\s*>$/);
+    if (!pm) continue;
+    bindings.push({
+      name: pm[1],
+      binding: bindings.length,
+      bufferName: pm[1],
+      addressSpace: pm[2] === 'Span' ? 'storage_readwrite' : 'storage_readonly',
+      elementType: pm[3],
+    });
+  }
+  if (bindings.length < 2 || bindings.length > 8) {
+    throw new TypeError(`r11-gpu-bindings: expected 2..8 storage buffer params, found ${bindings.length}`);
+  }
+  const elemType = bindings[0].elementType;
+  if (!bindings.every((b) => b.elementType === elemType)) {
+    throw new TypeError('r11-gpu-type: all buffer parameters in a compute kernel must share scalar element type');
+  }
+
+  const elementCount = opts.elementCount ?? 1024;
+  const workgroupSize = opts.workgroupSize ?? 64;
+  verifyGpuKernelSpec({
+    name: kernelName,
+    workgroupSize,
+    explicitTransfers: true,
+    effects: [],
+    bindings,
+  });
+
+  // Parse simple statements: `const/let x = expr;` and `out[idx] = expr;`
+  const stmts = body.split(';').map((s) => s.trim()).filter(Boolean);
+  const locals = new Map();
+  let storeTarget = null;
+  let storeExpr = null;
+
+  const tokenize = (expr) => {
+    const toks = [];
+    let i = 0;
+    while (i < expr.length) {
+      if (/\s/.test(expr[i])) { i++; continue; }
+      if ('+-*/()[]'.includes(expr[i])) { toks.push({ k: expr[i], v: expr[i] }); i++; continue; }
+      const nm = expr.slice(i).match(/^\d+(?:\.\d+)?/);
+      if (nm) { toks.push({ k: 'num', v: nm[0] }); i += nm[0].length; continue; }
+      const id = expr.slice(i).match(/^[A-Za-z_]\w*/);
+      if (id) { toks.push({ k: 'id', v: id[0] }); i += id[0].length; continue; }
+      throw new TypeError(`r11-gpu-parse: unexpected token '${expr[i]}' in GPU expression`);
+    }
+    return toks;
+  };
+
+  const parseExpr = (expr) => {
+    const toks = tokenize(expr);
+    let pos = 0;
+    const peek = () => toks[pos];
+    const eat = (k) => {
+      if (toks[pos]?.k !== k) throw new TypeError(`r11-gpu-parse: expected '${k}'`);
+      return toks[pos++];
+    };
+    const parsePrimary = () => {
+      const tk = peek();
+      if (!tk) throw new TypeError('r11-gpu-parse: unexpected end of expression');
+      if (tk.k === '(') {
+        eat('(');
+        const inner = parseAddSub();
+        eat(')');
+        return inner;
+      }
+      if (tk.k === 'num') {
+        pos++;
+        return { kind: 'lit', value: Number(tk.v) };
+      }
+      if (tk.k === 'id') {
+        pos++;
+        if (peek()?.k === '[') {
+          eat('[');
+          while (peek() && peek().k !== ']') pos++;
+          eat(']');
+          return { kind: 'load', buffer: tk.v };
+        }
+        return { kind: 'var', name: tk.v };
+      }
+      throw new TypeError(`r11-gpu-parse: unexpected token '${tk.v}'`);
+    };
+    const parseMulDiv = () => {
+      let left = parsePrimary();
+      while (peek()?.k === '*' || peek()?.k === '/') {
+        const op = toks[pos++].k;
+        left = { kind: 'bin', op, left, right: parsePrimary() };
+      }
+      return left;
+    };
+    const parseAddSub = () => {
+      let left = parseMulDiv();
+      while (peek()?.k === '+' || peek()?.k === '-') {
+        const op = toks[pos++].k;
+        left = { kind: 'bin', op, left, right: parseMulDiv() };
+      }
+      return left;
+    };
+    return parseAddSub();
+  };
+
+  const orderedLocals = [];
+  for (const st of stmts) {
+    if (st.startsWith('if') || st.startsWith('return')) continue;
+    const lm = st.match(/^(?:const|let)\s+([A-Za-z_]\w*)(?:\s*:\s*[A-Za-z_]\w*)?\s*=\s*(.+)$/);
+    if (lm) {
+      orderedLocals.push({ name: lm[1], ast: parseExpr(lm[2]) });
+      continue;
+    }
+    const sm = st.match(/^([A-Za-z_]\w*)\s*\[[^\]]+\]\s*=\s*(.+)$/);
+    if (sm) {
+      storeTarget = sm[1];
+      storeExpr = parseExpr(sm[2]);
+    }
+  }
+  if (!storeTarget || !storeExpr) {
+    throw new TypeError('r11-gpu-parse: GPU kernel must contain an output buffer assignment `out[i] = ...`');
+  }
+  const outBinding = bindings.find((b) => b.name === storeTarget && b.addressSpace === 'storage_readwrite');
+  if (!outBinding) {
+    throw new TypeError(`r11-gpu-write-target: '${storeTarget}' is not a writable Span<T> parameter`);
+  }
+
+  // Emit SPIR-V 1.3 instructions dynamically
+  let nextId = 1;
+  const allocId = () => nextId++;
+  const ID_MAIN = allocId();
+  const ID_VOID = allocId();
+  const ID_FN_TY = allocId();
+  const ID_U32 = allocId();
+  const ID_I32 = allocId();
+  const ID_F32 = allocId();
+  const ID_BOOL = allocId();
+  const ID_V3U32 = allocId();
+  const ID_PTR_IN_V3U32 = allocId();
+  const ID_PTR_IN_U32 = allocId();
+  const ID_ELEM = elemType === 'f32' ? ID_F32 : elemType === 'i32' ? ID_I32 : ID_U32;
+  const ID_ARR = allocId();
+  const ID_BUF_STRUCT = allocId();
+  const ID_PTR_SB_STRUCT = allocId();
+  const ID_PTR_SB_ELEM = allocId();
+  const ID_C0_U32 = allocId();
+  const ID_C0_I32 = allocId();
+  const ID_C_COUNT = allocId();
+  const ID_GL_GID = allocId();
+  const varIdByBuf = new Map();
+  for (const b of bindings) varIdByBuf.set(b.name, allocId());
+
+  const ID_ENTRY = allocId();
+  const ID_GID_PTR = allocId();
+  const ID_GID = allocId();
+  const ID_IN_BOUNDS = allocId();
+  const ID_BODY = allocId();
+  const ID_MERGE = allocId();
+
+  const constEntries = [];
+  const constIdByKey = new Map();
+  const internLit = (val) => {
+    let bits;
+    if (elemType === 'f32') {
+      const f = new Float32Array([val]);
+      bits = new Uint32Array(f.buffer)[0];
+    } else {
+      bits = (val | 0) >>> 0;
+    }
+    const key = `${elemType}:${bits}`;
+    if (constIdByKey.has(key)) return constIdByKey.get(key);
+    const id = allocId();
+    constIdByKey.set(key, id);
+    constEntries.push({ id, bits });
+    return id;
+  };
+
+  const bodyIns = [];
+  const emitBody = (op, ...args) => bodyIns.push([op, ...args]);
+
+  const lowerAst = (node) => {
+    if (node.kind === 'lit') return internLit(node.value);
+    if (node.kind === 'var') {
+      if (!locals.has(node.name)) throw new TypeError(`r11-gpu-var: undefined variable '${node.name}'`);
+      return locals.get(node.name);
+    }
+    if (node.kind === 'load') {
+      const varId = varIdByBuf.get(node.buffer);
+      if (!varId) throw new TypeError(`r11-gpu-buf: unknown buffer '${node.buffer}'`);
+      const ptrId = allocId();
+      const valId = allocId();
+      emitBody(65, ID_PTR_SB_ELEM, ptrId, varId, ID_C0_I32, ID_GID);
+      emitBody(61, ID_ELEM, valId, ptrId);
+      return valId;
+    }
+    if (node.kind === 'bin') {
+      const l = lowerAst(node.left);
+      const r = lowerAst(node.right);
+      const dst = allocId();
+      const opTable = elemType === 'f32'
+        ? { '+': 129, '-': 131, '*': 133, '/': 136 }
+        : elemType === 'i32'
+          ? { '+': 128, '-': 130, '*': 132, '/': 135 }
+          : { '+': 128, '-': 130, '*': 132, '/': 134 };
+      emitBody(opTable[node.op], ID_ELEM, dst, l, r);
+      return dst;
+    }
+    throw new TypeError(`r11-gpu-ast: unsupported node ${node.kind}`);
+  };
+
+  for (const loc of orderedLocals) {
+    locals.set(loc.name, lowerAst(loc.ast));
+  }
+  const resId = lowerAst(storeExpr);
+  const outPtrId = allocId();
+  emitBody(65, ID_PTR_SB_ELEM, outPtrId, varIdByBuf.get(storeTarget), ID_C0_I32, ID_GID);
+  emitBody(62, outPtrId, resId);
+
+  const words = [];
+  const ins = (opcode, ...operands) => {
+    const wc = 1 + operands.length;
+    words.push(((wc & 0xffff) << 16) | (opcode & 0xffff));
+    for (const o of operands) words.push(o >>> 0);
+  };
+
+  words.push(0x07230203, 0x00010300, 0x00000000, nextId, 0x00000000);
+  ins(17, 1);
+  ins(14, 0, 1);
+  ins(15, 5, ID_MAIN, 0x6e69616d, 0x00000000, ID_GL_GID);
+  ins(16, ID_MAIN, 17, workgroupSize, 1, 1);
+
+  ins(71, ID_GL_GID, 11, 28);
+  ins(71, ID_ARR, 6, 4);
+  ins(71, ID_BUF_STRUCT, 2);
+  ins(72, ID_BUF_STRUCT, 0, 35, 0);
+  for (const b of bindings) {
+    const vid = varIdByBuf.get(b.name);
+    ins(71, vid, 34, 0);
+    ins(71, vid, 33, b.binding);
+  }
+
+  ins(19, ID_VOID);
+  ins(33, ID_FN_TY, ID_VOID);
+  ins(21, ID_U32, 32, 0);
+  ins(21, ID_I32, 32, 1);
+  ins(22, ID_F32, 32);
+  ins(20, ID_BOOL);
+  ins(23, ID_V3U32, ID_U32, 3);
+  ins(32, ID_PTR_IN_V3U32, 1, ID_V3U32);
+  ins(32, ID_PTR_IN_U32, 1, ID_U32);
+  ins(29, ID_ARR, ID_ELEM);
+  ins(30, ID_BUF_STRUCT, ID_ARR);
+  ins(32, ID_PTR_SB_STRUCT, 12, ID_BUF_STRUCT);
+  ins(32, ID_PTR_SB_ELEM, 12, ID_ELEM);
+  ins(43, ID_U32, ID_C0_U32, 0);
+  ins(43, ID_I32, ID_C0_I32, 0);
+  ins(43, ID_U32, ID_C_COUNT, elementCount >>> 0);
+  for (const c of constEntries) {
+    ins(43, ID_ELEM, c.id, c.bits);
+  }
+
+  ins(59, ID_PTR_IN_V3U32, ID_GL_GID, 1);
+  for (const b of bindings) {
+    ins(59, ID_PTR_SB_STRUCT, varIdByBuf.get(b.name), 12);
+  }
+
+  ins(54, ID_VOID, ID_MAIN, 0, ID_FN_TY);
+  ins(248, ID_ENTRY);
+  ins(65, ID_PTR_IN_U32, ID_GID_PTR, ID_GL_GID, ID_C0_U32);
+  ins(61, ID_U32, ID_GID, ID_GID_PTR);
+  ins(176, ID_BOOL, ID_IN_BOUNDS, ID_GID, ID_C_COUNT);
+  ins(247, ID_MERGE, 0);
+  ins(250, ID_IN_BOUNDS, ID_BODY, ID_MERGE);
+
+  ins(248, ID_BODY);
+  for (const bi of bodyIns) ins(...bi);
+  ins(249, ID_MERGE);
+
+  ins(248, ID_MERGE);
+  ins(253);
+  ins(56);
+
+  const bytes = Buffer.alloc(words.length * 4);
+  for (let i = 0; i < words.length; i++) bytes.writeUInt32LE(words[i], i * 4);
+  const validation = validateSpirvBinary(bytes);
+  return {
+    name: kernelName,
+    bindings,
+    elementType: elemType,
+    workgroupSize,
+    bytes,
+    wordCount: words.length,
+    validation,
+    sha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+  };
+}

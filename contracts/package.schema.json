@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "tsfg.package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["digest", "family", "payload", "version"],
+  "properties": {
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "family": { "const": "tsfg.package" },
+    "payload": { "type": "string", "minLength": 2 },
+    "version": { "const": 1 }
+  }
+}

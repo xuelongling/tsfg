@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { buildTsfgProject, loadLocalPackage } from '../../tooling/r12-project-and-pkg.mjs';
@@ -13,18 +14,15 @@ import {
   TsfgTraceProfiler,
   UnifiedDebugSession,
 } from '../../tooling/debugger/r12-inspector-debugger.mjs';
+import { TsfgDapServer } from '../../tooling/debugger/tsfg-dap.mjs';
+import { resolveTempDir, resolveZigCacheEnv, resolveZigExe } from '../../compiler/tsfg-paths.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
-const ZIG = process.env.TSFG_ZIG ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\zig\\zig.exe';
+const TSFGC = path.join(REPO_ROOT, 'tooling', 'tsfgc.mjs');
+const ZIG = resolveZigExe();
 
 function zigEnv() {
-  return {
-    ...process.env,
-    TEMP: 'E:\\tsfg-temp',
-    TMP: 'E:\\tsfg-temp',
-    ZIG_LOCAL_CACHE_DIR: 'E:\\tsfg-cache\\zig-local',
-    ZIG_GLOBAL_CACHE_DIR: 'E:\\tsfg-cache\\zig-global',
-  };
+  return resolveZigCacheEnv();
 }
 
 test('R12 tsfg-lsp JSON-RPC 2.0 Server: Merged TS + tsfg Kernel/ABI/Hot-Reload Diagnostics, Hover, Definition & Content-Length Framing', () => {
@@ -240,4 +238,133 @@ test('R12 & W6 Windows Functional Complete: Precompiled .tpkg Detached Consumpti
   const traceParsed = JSON.parse(profiler.toChromeTraceJson());
   assert.equal(traceParsed.traceEvents.length, 4);
   assert.equal(profiler.summary().byCategory.gpu_vulkan, 1);
+});
+
+test('R12 Product W6 Real Non-Mocked Windows Game E2E: Real .ts -> .tbc + Windows x64 AOT .exe/.pdb + Live DAP Debugger + Real Win32 QPC Profiler + LSP Completion & .tpkg Cross-Ref + tsfgc Subcommands', async () => {
+  const root = path.join(resolveTempDir('r12-w6-product'), 'real-game');
+  await rm(root, { recursive: true, force: true });
+  await mkdir(root, { recursive: true });
+
+  const gameTs = path.join(root, 'game.ts');
+  await writeFile(
+    gameTs,
+    `
+@value
+export class Entity {
+  hp: i32 = 100;
+  dmg: i32 = 15;
+}
+
+export function simulateTurn(rounds: i32, armor: i32): i32 {
+  const e: Entity = new Entity();
+  let remaining: i32 = e.hp;
+  let i: i32 = 0;
+  while (i < rounds) {
+    let hit: i32 = e.dmg - armor;
+    if (hit < 1) { hit = 1; }
+    remaining = remaining - hit;
+    i = i + 1;
+  }
+  return remaining;
+}
+`,
+    'utf8',
+  );
+  await writeFile(
+    path.join(root, 'tsfg.project.json'),
+    JSON.stringify({
+      name: 'real_game',
+      version: '1.0.0',
+      entries: ['game.ts'],
+      entryFunction: 'simulateTurn',
+      components: [{ name: 'Entity', fields: [{ name: 'hp', type: 'i32' }, { name: 'dmg', type: 'i32' }] }],
+      systems: [{ name: 'combat', query: [{ component: 'Entity', access: 'write' }] }],
+    }),
+    'utf8',
+  );
+
+  // 1. Real `tsfgc build <dir> --aot` compiles REAL .ts -> TSFGR05B .tbc + Windows x64 AOT .exe + .pdb!
+  const cliBuild = spawnSync(process.execPath, [TSFGC, 'build', root, '--aot', '--clean'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  });
+  assert.equal(cliBuild.status, 0, `tsfgc build failed:\n${cliBuild.stdout}\n${cliBuild.stderr}`);
+  const buildJson = JSON.parse(cliBuild.stdout.trim());
+  assert.equal(buildJson.usedRealTsPipeline, true);
+  assert.ok(existsSync(buildJson.paths.bytecodePath));
+  assert.ok(existsSync(buildJson.paths.aotPath));
+  assert.ok(buildJson.paths.pdbPath && existsSync(buildJson.paths.pdbPath));
+
+  // 2. Execute via BOTH `tsfgc run` (Zig VM) AND the standalone compiled Windows x64 AOT `.exe`!
+  const vmRun = spawnSync(process.execPath, [TSFGC, 'run', gameTs, '--entry', 'simulateTurn', '--args', '4,5'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  });
+  assert.equal(vmRun.status, 0, `tsfgc run failed:\n${vmRun.stderr}`);
+  const vmOut = JSON.parse(vmRun.stdout.trim());
+  assert.equal(vmOut.status, 'ok');
+  assert.equal(vmOut.i32, 60); // 100 - 4*(15-5) = 60
+
+  const aotRun = spawnSync(buildJson.paths.aotPath, ['--entry', 'simulateTurn', '--args', '4,5'], {
+    encoding: 'utf8',
+  });
+  assert.equal(aotRun.status, 0, `standalone AOT exe failed:\n${aotRun.stderr}`);
+  const aotOut = JSON.parse(aotRun.stdout.trim());
+  assert.equal(aotOut.status, 'ok');
+  assert.equal(aotOut.i32, vmOut.i32);
+
+  // 3. `tsfgc inspect` decodes the real compiled `.tbc`
+  const insp = spawnSync(process.execPath, [TSFGC, 'inspect', buildJson.paths.bytecodePath], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  });
+  assert.equal(insp.status, 0, `tsfgc inspect failed:\n${insp.stderr}`);
+  const inspJson = JSON.parse(insp.stdout);
+  assert.equal(inspJson.magic, 'TSFGR05B');
+  assert.ok(inspJson.functions.length >= 1);
+
+  // 4. Live DAP Debugger driving REAL `tsfg-r05-vm.exe` breakpoints + stackTrace + variables + Win32 QPC trace!
+  const dap = new TsfgDapServer();
+  const initMsgs = await dap.handleMessage({ seq: 1, type: 'request', command: 'initialize', arguments: {} });
+  assert.equal(initMsgs[0].success, true);
+  await dap.handleMessage({
+    seq: 2,
+    type: 'request',
+    command: 'setBreakpoints',
+    arguments: { source: { path: gameTs }, breakpoints: [{ line: 9 }] },
+  });
+  const launchMsgs = await dap.handleMessage({
+    seq: 3,
+    type: 'request',
+    command: 'launch',
+    arguments: { program: gameTs, entry: 'simulateTurn', args: ['4', '5'], stopOnEntry: true },
+  });
+  assert.equal(launchMsgs[0].success, true);
+  assert.ok(launchMsgs.some((m) => m.type === 'event' && m.event === 'stopped'));
+  const stRes = await dap.handleMessage({ seq: 4, type: 'request', command: 'stackTrace', arguments: { threadId: 1 } });
+  assert.ok(stRes[0].body.stackFrames.length >= 1);
+  assert.equal(stRes[0].body.stackFrames[0].name, 'simulateTurn');
+
+  // Ingest real Win32 QPC trace from live VM run into TsfgTraceProfiler
+  const prof = new TsfgTraceProfiler();
+  assert.ok(dap.lastRun?.trace, 'Expected real Win32 QPC trace from live VM run');
+  prof.ingestChromeTrace(dap.lastRun.trace);
+  assert.ok(JSON.parse(prof.toChromeTraceJson()).traceEvents.length >= 0);
+
+  // 5. LSP completion + documentSymbol + cross-package `.tpkg` declarations
+  const lsp = new TsfgLspServer();
+  lsp.registerPackageDeclarations('real_game', 'export declare function external_tick(dt: i32): i32;\n');
+  lsp.handleMessage({ id: 1, jsonrpc: '2.0', method: 'initialize', params: {} });
+  lsp.handleMessage({
+    jsonrpc: '2.0',
+    method: 'textDocument/didOpen',
+    params: { textDocument: { uri: 'file:///game/app.ts', text: 'export function boot(): i32 { return external_tick(16); }\n' } },
+  });
+  const comp = lsp.handleMessage({ id: 2, jsonrpc: '2.0', method: 'textDocument/completion', params: { textDocument: { uri: 'file:///game/app.ts' }, position: { line: 0, character: 37 } } });
+  assert.ok(comp.result.items.some((x) => x.label === 'external_tick'));
+  assert.ok(comp.result.items.some((x) => x.label === 'ReadSpan'));
+  const def = lsp.handleMessage({ id: 3, jsonrpc: '2.0', method: 'textDocument/definition', params: { textDocument: { uri: 'file:///game/app.ts' }, position: { line: 0, character: 40 } } });
+  assert.equal(def.result.uri, 'tsfg-pkg:///real_game.d.ts');
+  const syms = lsp.handleMessage({ id: 4, jsonrpc: '2.0', method: 'textDocument/documentSymbol', params: { textDocument: { uri: 'file:///game/app.ts' } } });
+  assert.equal(syms.result[0].name, 'boot');
 });

@@ -1,0 +1,61 @@
+{
+  "name": "tsfg-vscode",
+  "displayName": "tsfg Language & Debugger (Windows x64)",
+  "description": "TypeScript-for-Games (tsfg) Language Server (tsfg-lsp) and Unified VM/AOT Debugger (tsfg-dap) for VS Code.",
+  "version": "1.0.0",
+  "publisher": "tsfg",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Programming Languages", "Debuggers", "Linters"],
+  "activationEvents": [
+    "onLanguage:typescript",
+    "workspaceContains:tsfg.project.json"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "tsfg",
+      "properties": {
+        "tsfg.tsfgcPath": {
+          "type": "string",
+          "default": "tsfgc",
+          "description": "Path to tsfgc CLI executable or tsfgc.cmd"
+        }
+      }
+    },
+    "debuggers": [
+      {
+        "type": "tsfg",
+        "label": "tsfg Debugger (VM / Windows x64 AOT)",
+        "languages": ["typescript"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Absolute path to entry .ts file"
+              },
+              "entry": {
+                "type": "string",
+                "default": "main",
+                "description": "Exported function name to execute"
+              },
+              "args": {
+                "type": "array",
+                "default": [],
+                "description": "Typed arguments passed to entry function"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "default": true
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

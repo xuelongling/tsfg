@@ -5,23 +5,25 @@
 ## Current priority: Windows-host development
 
 The plan is Windows-first: R00 **Development Ready**, W1–W6 **Windows
-Functional Complete**, then R13/W7 **Certified Release**. See the
+Functional Complete**, and standalone **Windows x64 Product SDK** delivery,
+followed by external-matrix R13/W7 **Certified Release**. See the
 [roadmap](docs/tsfg-roadmap.md),
 [engineering charter](docs/r00-engineering-charter.md), and
 [approved scope change](docs/proposals/0001-windows-first-development.md).
-These are separate acceptance states, not claims that they have passed.
 
-Use the current Windows host for development and report its actual OS/build.
-A Windows VM is not a development prerequisite; minimum Windows/Linux,
-independent VM proofs, release signing and promotion belong to later
-certification. Full language/runtime/CPU/GPU/tool functionality is retained.
-The entry below is the engineering smoke control plane. The bounded compiler
-and Zig VM implementation supports [one i32 constant-return function](docs/r03-constant-vm.md).
-Broader language, ABI and Reflection acceptance remains on the roadmap.
+## Windows x64 Product Toolchain & Runtime (`tsfgc` / `tsfg-runtime`)
 
-This documentation change does not alter CLI behavior, workflows, required
-checks, versions or release state. Existing protections still apply until
-their explicit implementation migration.
+`tcfg` ships a unified Windows x64 (`windows-x86_64-msvc`, baseline `x86-64-v2`) toolchain and zero-compiler-dependency Zig runtime:
+
+- **Single Unified TypeScript Pipeline**: Single-file and multi-file `.ts` modules compile through the Go TypeScript frontend (`tsfg-frontend.exe`), HIR, and C++ MLIR Core IR (`tsfg-core-ir.exe`) into BOTH verified `TSFGR05B` bytecode (`tsfg-r05-vm.exe`) and native Windows x64 AOT executables/DLLs with detached `.pdb` symbols (`clang-cl` + `lld-link`).
+- **Unified Embeddable Runtime**: `runtime/tsfg-runtime.zig` (`tsfg-runtime.exe`, `tsfg_runtime.lib`, `include/tsfg_runtime.h`) integrates the moving generational GC (`r06`), persistent multi-frame register VM (`r05`), 3-phase hot-reload `FunctionCell` (`r09`), dynamic `@component` ECS + persistent work-stealing thread pool (`r10`), hardware-first Vulkan 1.3 compute backend with Lavapipe fallback (`r11`), and Win32 `QueryPerformanceCounter` Chrome Trace profiler.
+- **Developer CLI (`bin/tsfgc.cmd` / `tooling/tsfgc.mjs`)**:
+  - `tsfgc build <project-dir> [--aot] [--mode exe|dll] [--profile debug|release]` — builds `.tbc`, `.tsfgabi`, `.tmeta`, `.tpkg`, Zig/TS bindings, and optional native `.exe`/`.dll` + `.pdb`
+  - `tsfgc run <file.ts> [--entry fn] [--args a,b] [--breakpoint-pc N] [--profile-trace out.json]`
+  - `tsfgc aot <file.ts> [--entry fn] [--mode exe|dll] [--profile debug|release] [--run]`
+  - `tsfgc inspect <artifact.tbc|.tmeta|.tsfgabi|.tpkg>`
+  - `tsfgc lsp` / `tsfgc dap` — live stdio JSON-RPC 2.0 Language Server (`tsfg-lsp`) and Debug Adapter Protocol (`tsfg-dap`) with VS Code extension in `tooling/vscode-tsfg/`.
+- **Standalone Windows x64 SDK Packager**: `npm run sdk:windows` (`eng/build-windows-sdk.mjs`) packages a self-contained portable Windows x64 SDK `.zip` with PE32+ zero-compiler-dependency audit, full-repo SPDX 2.3 SBOM, `NOTICE`, SHA-256 manifest, and Ed25519 provenance signature.
 
 For the implemented Windows-host check driver, see
 [Windows development checks](docs/windows-development.md). It provides focused

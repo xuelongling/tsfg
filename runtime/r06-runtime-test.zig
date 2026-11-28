@@ -209,3 +209,50 @@ test "R06 Multi-Threaded Concurrent Safepoint Coordinator (4 mutators + GC STW p
     try std.testing.expect(coord.safepoints_hit.load(.acquire) >= 32);
     try std.testing.expect(mutator_iters.load(.acquire) > 0);
 }
+
+test "R06 Owned Multi-Function AOT StackMaps survive freed parse arena & Chained Nested AOT Shadow Frames relocate caller + callee" {
+    const alloc = std.testing.allocator;
+    var gc = gc_mod.GenGc.init(alloc, 1024 * 1024);
+    defer gc.deinit();
+
+    // Register stackmaps for 2 functions under SAME code_id from a temporary arena, then FREE arena!
+    {
+        var tmp_arena = std.heap.ArenaAllocator.init(alloc);
+        defer tmp_arena.deinit();
+        const a = tmp_arena.allocator();
+
+        const r_caller = try a.dupe(proto.RootEntry, &.{.{ .kind = "live_ref", .slotOffset = 0, .tagOffset = -1 }});
+        const sp_caller = try a.dupe(proto.SafepointEntry, &.{.{ .frameSize = 16, .pcOffset = 10, .roots = r_caller }});
+        try gc.registerAotStackMap(0x5555, sp_caller);
+
+        const r_callee = try a.dupe(proto.RootEntry, &.{.{ .kind = "live_ref", .slotOffset = 0, .tagOffset = -1 }});
+        const sp_callee = try a.dupe(proto.SafepointEntry, &.{.{ .frameSize = 16, .pcOffset = 20, .roots = r_callee }});
+        try gc.registerAotStackMap(0x5555, sp_callee);
+    }
+
+    const obj_caller = try gc.alloc(1, .class_instance, 1, 0);
+    obj_caller.scalars[0] = 1001;
+    const obj_callee = try gc.alloc(2, .class_instance, 1, 0);
+    obj_callee.scalars[0] = 2002;
+    const addr_caller_0 = @intFromPtr(obj_caller);
+    const addr_callee_0 = @intFromPtr(obj_callee);
+
+    var caller_mem: [16]u8 align(8) = [_]u8{0} ** 16;
+    std.mem.writeInt(usize, caller_mem[0..8], addr_caller_0, .little);
+    var callee_mem: [16]u8 align(8) = [_]u8{0} ** 16;
+    std.mem.writeInt(usize, callee_mem[0..8], addr_callee_0, .little);
+
+    // Caller pushes shadow frame before calling callee; callee hits safepoint at pc=20
+    var caller_sf = gc_mod.AotShadowFrame{ .code_id = 0x5555, .pc_offset = 10, .frame_mem = &caller_mem };
+    gc.pushAotShadowFrame(&caller_sf);
+    defer gc.popAotShadowFrame(&caller_sf);
+
+    try gc.collectAtAotSafepoint(0x5555, 20, &callee_mem);
+
+    const addr_caller_1 = std.mem.readInt(usize, caller_mem[0..8], .little);
+    const addr_callee_1 = std.mem.readInt(usize, callee_mem[0..8], .little);
+    try std.testing.expect(addr_caller_1 != addr_caller_0);
+    try std.testing.expect(addr_callee_1 != addr_callee_0);
+    try std.testing.expectEqual(@as(u64, 1001), @as(*gc_mod.GcObject, @ptrFromInt(addr_caller_1)).scalars[0]);
+    try std.testing.expectEqual(@as(u64, 2002), @as(*gc_mod.GcObject, @ptrFromInt(addr_callee_1)).scalars[0]);
+}

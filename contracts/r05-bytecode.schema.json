@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "tsfg.r05-bytecode",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["abiHash", "codeVersion", "formatVersion", "functions", "magic", "totalBytes"],
+  "properties": {
+    "abiHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "codeVersion": { "type": "integer", "minimum": 0 },
+    "formatVersion": { "enum": [1, 2] },
+    "functions": { "type": "array" },
+    "magic": { "const": "TSFGR05B" },
+    "totalBytes": { "type": "integer", "minimum": 48 }
+  }
+}

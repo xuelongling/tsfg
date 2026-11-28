@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import {emitFormalExceptionCore} from './formal-exception-core.mjs';
 import {isProxy} from 'node:util/types';
 import {isCommonProgramContext,buildCommonProgramHir,readCommonProgramHir} from './common-program-hir.mjs';

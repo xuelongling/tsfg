@@ -98,6 +98,27 @@ pub const Chunk = struct {
     pub fn releaseReadVel(self: *Chunk) void {
         _ = self.vel_readers.fetchSub(1, .acq_rel);
     }
+
+    pub fn acquireWriteVel(self: *Chunk) EcsError!void {
+        if (self.vel_writer.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) {
+            return error.BorrowConflict;
+        }
+        if (self.vel_readers.load(.acquire) > 0) {
+            self.vel_writer.store(false, .release);
+            return error.BorrowConflict;
+        }
+    }
+
+    pub fn releaseWriteVel(self: *Chunk) void {
+        self.vel_writer.store(false, .release);
+    }
+
+    pub fn hasActiveBorrows(self: *const Chunk) bool {
+        return self.pos_writer.load(.acquire) or
+            self.vel_writer.load(.acquire) or
+            self.pos_readers.load(.acquire) > 0 or
+            self.vel_readers.load(.acquire) > 0;
+    }
 };
 
 const Archetype = struct {
@@ -236,6 +257,9 @@ pub const EcsWorld = struct {
         const arch_idx = rec.arch_idx;
         const chunk_idx = rec.chunk_idx;
         const row = rec.row;
+        if (self.archetypes.items[arch_idx].chunks.items[chunk_idx].hasActiveBorrows()) {
+            return error.BorrowConflict;
+        }
         self.swapRemoveRow(arch_idx, chunk_idx, row);
         self.records.items[e.index].alive = false;
         self.records.items[e.index].generation +%= 1;
@@ -255,6 +279,7 @@ pub const EcsWorld = struct {
         if ((old_mask & add_mask) != 0) return error.ComponentAlreadyPresent;
 
         const old_c = self.archetypes.items[old_arch].chunks.items[old_chunk_idx];
+        if (old_c.hasActiveBorrows()) return error.BorrowConflict;
         const saved_px = old_c.pos_x[old_row];
         const saved_py = old_c.pos_y[old_row];
         const saved_vx = old_c.vel_x[old_row];
@@ -291,6 +316,7 @@ pub const EcsWorld = struct {
         if (new_mask == 0) return error.InvalidChunkState;
 
         const old_c = self.archetypes.items[old_arch].chunks.items[old_chunk_idx];
+        if (old_c.hasActiveBorrows()) return error.BorrowConflict;
         const saved_px = old_c.pos_x[old_row];
         const saved_py = old_c.pos_y[old_row];
         const saved_vx = old_c.vel_x[old_row];
@@ -535,31 +561,473 @@ const SpinMutex = struct {
 
 const WorkDeque = struct {
     mu: SpinMutex = .{},
-    items: std.ArrayListUnmanaged(usize) = .empty,
+    buf: []usize = &.{},
+    head: usize = 0,
+    tail: usize = 0,
+
+    fn ensureCapacity(self: *WorkDeque, allocator: std.mem.Allocator, cap: usize) !void {
+        if (self.buf.len >= cap) {
+            self.head = 0;
+            self.tail = 0;
+            return;
+        }
+        if (self.buf.len > 0) allocator.free(self.buf);
+        self.buf = try allocator.alloc(usize, cap);
+        self.head = 0;
+        self.tail = 0;
+    }
 
     fn push(self: *WorkDeque, allocator: std.mem.Allocator, task_idx: usize) !void {
         self.mu.lock();
         defer self.mu.unlock();
-        try self.items.append(allocator, task_idx);
+        if (self.tail >= self.buf.len) {
+            const new_cap = if (self.buf.len == 0) 32 else self.buf.len * 2;
+            const nb = try allocator.alloc(usize, new_cap);
+            const count = self.tail - self.head;
+            if (count > 0) @memcpy(nb[0..count], self.buf[self.head..self.tail]);
+            if (self.buf.len > 0) allocator.free(self.buf);
+            self.buf = nb;
+            self.head = 0;
+            self.tail = count;
+        }
+        self.buf[self.tail] = task_idx;
+        self.tail += 1;
     }
 
-    /// Owner pops LIFO from bottom for cache locality.
+    /// Owner pops LIFO from bottom in O(1) for cache locality.
     fn popLocal(self: *WorkDeque) ?usize {
         self.mu.lock();
         defer self.mu.unlock();
-        return self.items.pop();
+        if (self.tail <= self.head) return null;
+        self.tail -= 1;
+        return self.buf[self.tail];
     }
 
-    /// Thief steals FIFO from top.
+    /// Thief steals FIFO from top in O(1) (zero element shifting!).
     fn steal(self: *WorkDeque) ?usize {
         self.mu.lock();
         defer self.mu.unlock();
-        if (self.items.items.len == 0) return null;
-        return self.items.orderedRemove(0);
+        if (self.head >= self.tail) return null;
+        const val = self.buf[self.head];
+        self.head += 1;
+        return val;
     }
 
     fn deinit(self: *WorkDeque, allocator: std.mem.Allocator) void {
-        self.items.deinit(allocator);
+        if (self.buf.len > 0) allocator.free(self.buf);
+        self.buf = &.{};
+        self.head = 0;
+        self.tail = 0;
+    }
+};
+
+/// Persistent reusable worker thread pool with zero per-frame OS thread spawning.
+pub const PersistentThreadPool = struct {
+    allocator: std.mem.Allocator,
+    worker_count: usize,
+    threads: []std.Thread,
+    deques: []WorkDeque,
+    // Job dispatch coordination
+    shutdown: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    epoch: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    active_workers: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    current_n_workers: usize = 0,
+    current_cancel: ?*CancelToken = null,
+    current_ctx: ?*anyopaque = null,
+    current_fn: ?*const fn (?*anyopaque, usize) anyerror!void = null,
+    completed: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    stolen: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+    failed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    cancelled: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    worker_active: [32]std.atomic.Value(u32) = [_]std.atomic.Value(u32){std.atomic.Value(u32).init(0)} ** 32,
+
+    pub fn create(allocator: std.mem.Allocator, worker_count: usize) !*PersistentThreadPool {
+        const wc = @max(worker_count, 1);
+        const self = try allocator.create(PersistentThreadPool);
+        errdefer allocator.destroy(self);
+        const deques = try allocator.alloc(WorkDeque, wc);
+        errdefer allocator.free(deques);
+        for (deques) |*d| d.* = .{};
+        const threads = try allocator.alloc(std.Thread, if (wc > 1) wc - 1 else 0);
+        errdefer allocator.free(threads);
+
+        self.* = .{
+            .allocator = allocator,
+            .worker_count = wc,
+            .threads = threads,
+            .deques = deques,
+        };
+        for (1..wc) |w| {
+            self.threads[w - 1] = try std.Thread.spawn(.{}, workerLoop, .{ self, w });
+        }
+        return self;
+    }
+
+    pub fn destroy(self: *PersistentThreadPool) void {
+        self.shutdown.store(true, .release);
+        _ = self.epoch.fetchAdd(1, .acq_rel);
+        for (self.threads) |th| th.join();
+        for (self.deques) |*d| d.deinit(self.allocator);
+        self.allocator.free(self.deques);
+        self.allocator.free(self.threads);
+        self.allocator.destroy(self);
+    }
+
+    fn executeWorkerSlice(self: *PersistentThreadPool, id: usize) void {
+        const func = self.current_fn orelse return;
+        const n_active = self.current_n_workers;
+        if (id >= n_active) return;
+        while (true) {
+            if (self.failed.load(.acquire)) return;
+            if (self.current_cancel) |ct| {
+                if (ct.isCancelled()) {
+                    self.cancelled.store(true, .release);
+                    return;
+                }
+            }
+            var task = self.deques[id].popLocal();
+            var was_stolen = false;
+            if (task == null) {
+                var offset: usize = 1;
+                while (offset < n_active) : (offset += 1) {
+                    const victim = (id + offset) % n_active;
+                    if (self.deques[victim].steal()) |stolen_task| {
+                        task = stolen_task;
+                        was_stolen = true;
+                        break;
+                    }
+                }
+            }
+            const t_idx = task orelse return;
+            if (id < 32) _ = self.worker_active[id].fetchAdd(1, .monotonic);
+            if (was_stolen) _ = self.stolen.fetchAdd(1, .monotonic);
+            func(self.current_ctx, t_idx) catch {
+                self.failed.store(true, .release);
+                return;
+            };
+            _ = self.completed.fetchAdd(1, .acq_rel);
+        }
+    }
+
+    fn workerLoop(self: *PersistentThreadPool, id: usize) void {
+        var seen_epoch: u64 = 0;
+        while (true) {
+            var spin: u32 = 0;
+            while (true) {
+                const cur = self.epoch.load(.acquire);
+                if (cur != seen_epoch) {
+                    seen_epoch = cur;
+                    break;
+                }
+                if (self.shutdown.load(.acquire)) return;
+                spin += 1;
+                if (spin < 256) {
+                    std.atomic.spinLoopHint();
+                } else {
+                    std.Thread.yield() catch {};
+                }
+            }
+            if (self.shutdown.load(.acquire)) return;
+            self.executeWorkerSlice(id);
+            _ = self.active_workers.fetchSub(1, .acq_rel);
+        }
+    }
+
+    pub fn parallelFor(
+        self: *PersistentThreadPool,
+        task_count: usize,
+        cancel_token: ?*CancelToken,
+        ctx: anytype,
+        comptime worker_fn: fn (@TypeOf(ctx), usize) anyerror!void,
+    ) !JobStats {
+        if (task_count == 0) return .{};
+        const CtxT = @TypeOf(ctx);
+        var local_ctx = ctx;
+        const n_workers = @min(self.worker_count, task_count);
+        for (0..n_workers) |w| {
+            try self.deques[w].ensureCapacity(self.allocator, task_count);
+        }
+        // Distribute contiguous chunks across workers so locality stays high while stealing balances skew
+        for (0..task_count) |t| {
+            const owner: usize = if (t < (task_count * 2) / 3) 0 else (t % n_workers);
+            try self.deques[owner].push(self.allocator, t);
+        }
+        self.completed.store(0, .release);
+        self.stolen.store(0, .release);
+        self.failed.store(false, .release);
+        self.cancelled.store(false, .release);
+        for (0..@min(self.worker_count, 32)) |w| self.worker_active[w].store(0, .release);
+        self.current_n_workers = n_workers;
+        self.current_cancel = cancel_token;
+        self.current_ctx = @ptrCast(&local_ctx);
+        self.current_fn = struct {
+            fn thunk(raw: ?*anyopaque, idx: usize) anyerror!void {
+                const typed: *CtxT = @ptrCast(@alignCast(raw.?));
+                return worker_fn(typed.*, idx);
+            }
+        }.thunk;
+
+        // Wake all persistent worker threads
+        const bg_count = self.threads.len;
+        self.active_workers.store(bg_count, .release);
+        _ = self.epoch.fetchAdd(1, .acq_rel);
+
+        // Main thread executes worker 0
+        self.executeWorkerSlice(0);
+        while (self.active_workers.load(.acquire) > 0) {
+            std.atomic.spinLoopHint();
+        }
+
+        var distinct: usize = 0;
+        for (0..@min(n_workers, 32)) |w| {
+            if (self.worker_active[w].load(.acquire) > 0) distinct += 1;
+        }
+        if (self.failed.load(.acquire)) return error.JobFailed;
+        return .{
+            .tasks_completed = self.completed.load(.acquire),
+            .tasks_stolen = self.stolen.load(.acquire),
+            .distinct_workers = distinct,
+            .cancelled = self.cancelled.load(.acquire),
+        };
+    }
+};
+
+// ============================================================================
+// Dynamic Schema-Driven ECS World (Arbitrary User `@component` Types!)
+// ============================================================================
+pub const DynamicComponentDesc = struct {
+    id: u32,
+    name: []const u8,
+    stride: usize,
+    alignment: usize,
+};
+
+pub const DynamicColumn = struct {
+    comp_id: u32,
+    stride: usize,
+    data: []u8, // CHUNK_CAP * stride contiguous SoA bytes
+    readers: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    writer: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    pub fn acquireRead(self: *DynamicColumn) EcsError!void {
+        if (self.writer.load(.acquire)) return error.BorrowConflict;
+        _ = self.readers.fetchAdd(1, .acq_rel);
+        if (self.writer.load(.acquire)) {
+            _ = self.readers.fetchSub(1, .acq_rel);
+            return error.BorrowConflict;
+        }
+    }
+    pub fn releaseRead(self: *DynamicColumn) void {
+        _ = self.readers.fetchSub(1, .acq_rel);
+    }
+    pub fn acquireWrite(self: *DynamicColumn) EcsError!void {
+        if (self.writer.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return error.BorrowConflict;
+        if (self.readers.load(.acquire) > 0) {
+            self.writer.store(false, .release);
+            return error.BorrowConflict;
+        }
+    }
+    pub fn releaseWrite(self: *DynamicColumn) void {
+        self.writer.store(false, .release);
+    }
+    pub fn isBorrowed(self: *const DynamicColumn) bool {
+        return self.writer.load(.acquire) or self.readers.load(.acquire) > 0;
+    }
+};
+
+pub const DynamicChunk = struct {
+    mask: u64,
+    len: usize = 0,
+    entities: [CHUNK_CAP]EntityHandle = undefined,
+    columns: []DynamicColumn,
+
+    pub fn findColumn(self: *DynamicChunk, comp_id: u32) ?*DynamicColumn {
+        for (self.columns) |*col| {
+            if (col.comp_id == comp_id) return col;
+        }
+        return null;
+    }
+
+    pub fn hasActiveBorrows(self: *const DynamicChunk) bool {
+        for (self.columns) |*col| {
+            if (col.isBorrowed()) return true;
+        }
+        return false;
+    }
+};
+
+const DynamicArchetype = struct {
+    mask: u64,
+    chunks: std.ArrayListUnmanaged(*DynamicChunk) = .empty,
+
+    fn deinit(self: *DynamicArchetype, allocator: std.mem.Allocator) void {
+        for (self.chunks.items) |c| {
+            for (c.columns) |col| allocator.free(col.data);
+            allocator.free(c.columns);
+            allocator.destroy(c);
+        }
+        self.chunks.deinit(allocator);
+    }
+};
+
+pub const DynamicEcsWorld = struct {
+    allocator: std.mem.Allocator,
+    schemas: std.ArrayListUnmanaged(DynamicComponentDesc) = .empty,
+    archetypes: std.ArrayListUnmanaged(DynamicArchetype) = .empty,
+    records: std.ArrayListUnmanaged(EntityRecord) = .empty,
+    free_indices: std.ArrayListUnmanaged(u32) = .empty,
+    live_count: usize = 0,
+
+    pub fn init(allocator: std.mem.Allocator) DynamicEcsWorld {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *DynamicEcsWorld) void {
+        for (self.archetypes.items) |*a| a.deinit(self.allocator);
+        self.archetypes.deinit(self.allocator);
+        for (self.schemas.items) |s| self.allocator.free(s.name);
+        self.schemas.deinit(self.allocator);
+        self.records.deinit(self.allocator);
+        self.free_indices.deinit(self.allocator);
+    }
+
+    /// Register any user `@component` schema dynamically (up to 64 component types per world).
+    pub fn registerComponent(self: *DynamicEcsWorld, name: []const u8, stride: usize, alignment: usize) EcsError!u32 {
+        if (self.schemas.items.len >= 64 or stride == 0) return error.InvalidChunkState;
+        const id: u32 = @intCast(self.schemas.items.len);
+        const dup = self.allocator.dupe(u8, name) catch return error.OutOfMemory;
+        self.schemas.append(self.allocator, .{
+            .id = id,
+            .name = dup,
+            .stride = stride,
+            .alignment = @max(alignment, 1),
+        }) catch {
+            self.allocator.free(dup);
+            return error.OutOfMemory;
+        };
+        return id;
+    }
+
+    fn getOrCreateArchetype(self: *DynamicEcsWorld, mask: u64) EcsError!usize {
+        for (self.archetypes.items, 0..) |a, idx| {
+            if (a.mask == mask) return idx;
+        }
+        self.archetypes.append(self.allocator, .{ .mask = mask }) catch return error.OutOfMemory;
+        return self.archetypes.items.len - 1;
+    }
+
+    fn allocRow(self: *DynamicEcsWorld, arch_idx: usize) EcsError!struct { chunk_idx: usize, row: usize } {
+        const arch = &self.archetypes.items[arch_idx];
+        for (arch.chunks.items, 0..) |c, ci| {
+            if (c.len < CHUNK_CAP) {
+                const row = c.len;
+                c.len += 1;
+                return .{ .chunk_idx = ci, .row = row };
+            }
+        }
+        var col_count: usize = 0;
+        for (0..self.schemas.items.len) |ci| {
+            if ((arch.mask & (@as(u64, 1) << @intCast(ci))) != 0) col_count += 1;
+        }
+        const cols = self.allocator.alloc(DynamicColumn, col_count) catch return error.OutOfMemory;
+        var built: usize = 0;
+        errdefer {
+            for (0..built) |k| self.allocator.free(cols[k].data);
+            self.allocator.free(cols);
+        }
+        for (self.schemas.items, 0..) |sc, ci| {
+            if ((arch.mask & (@as(u64, 1) << @intCast(ci))) != 0) {
+                const bytes = self.allocator.alloc(u8, CHUNK_CAP * sc.stride) catch return error.OutOfMemory;
+                @memset(bytes, 0);
+                cols[built] = .{ .comp_id = sc.id, .stride = sc.stride, .data = bytes };
+                built += 1;
+            }
+        }
+        const chunk = self.allocator.create(DynamicChunk) catch return error.OutOfMemory;
+        chunk.* = .{ .mask = arch.mask, .len = 1, .columns = cols };
+        arch.chunks.append(self.allocator, chunk) catch {
+            self.allocator.destroy(chunk);
+            return error.OutOfMemory;
+        };
+        return .{ .chunk_idx = arch.chunks.items.len - 1, .row = 0 };
+    }
+
+    pub fn spawn(self: *DynamicEcsWorld, mask: u64) EcsError!EntityHandle {
+        if (mask == 0) return error.InvalidChunkState;
+        const idx: u32 = if (self.free_indices.items.len > 0) self.free_indices.pop().? else blk: {
+            const next: u32 = @intCast(self.records.items.len);
+            self.records.append(self.allocator, .{}) catch return error.OutOfMemory;
+            break :blk next;
+        };
+        const arch_idx = try self.getOrCreateArchetype(mask);
+        const loc = try self.allocRow(arch_idx);
+        const gen = self.records.items[idx].generation;
+        const handle = EntityHandle{ .index = idx, .generation = gen };
+        self.records.items[idx] = .{
+            .generation = gen,
+            .alive = true,
+            .arch_idx = arch_idx,
+            .chunk_idx = loc.chunk_idx,
+            .row = loc.row,
+        };
+        self.archetypes.items[arch_idx].chunks.items[loc.chunk_idx].entities[loc.row] = handle;
+        self.live_count += 1;
+        return handle;
+    }
+
+    pub fn setComponentBytes(self: *DynamicEcsWorld, e: EntityHandle, comp_id: u32, bytes: []const u8) EcsError!void {
+        if (e.index >= self.records.items.len) return error.StaleEntity;
+        const rec = &self.records.items[e.index];
+        if (!rec.alive or rec.generation != e.generation) return error.StaleEntity;
+        const chunk = self.archetypes.items[rec.arch_idx].chunks.items[rec.chunk_idx];
+        const col = chunk.findColumn(comp_id) orelse return error.ComponentMissing;
+        if (bytes.len != col.stride) return error.InvalidChunkState;
+        const off = rec.row * col.stride;
+        @memcpy(col.data[off .. off + col.stride], bytes);
+    }
+
+    pub fn getComponentBytes(self: *const DynamicEcsWorld, e: EntityHandle, comp_id: u32) EcsError![]const u8 {
+        if (e.index >= self.records.items.len) return error.StaleEntity;
+        const rec = &self.records.items[e.index];
+        if (!rec.alive or rec.generation != e.generation) return error.StaleEntity;
+        const chunk = self.archetypes.items[rec.arch_idx].chunks.items[rec.chunk_idx];
+        const col = chunk.findColumn(comp_id) orelse return error.ComponentMissing;
+        const off = rec.row * col.stride;
+        return col.data[off .. off + col.stride];
+    }
+
+    pub fn despawn(self: *DynamicEcsWorld, e: EntityHandle) EcsError!void {
+        if (e.index >= self.records.items.len) return error.StaleEntity;
+        const rec = self.records.items[e.index];
+        if (!rec.alive or rec.generation != e.generation) return error.StaleEntity;
+        const chunk = self.archetypes.items[rec.arch_idx].chunks.items[rec.chunk_idx];
+        if (chunk.hasActiveBorrows()) return error.BorrowConflict;
+        const last = chunk.len - 1;
+        if (rec.row != last) {
+            chunk.entities[rec.row] = chunk.entities[last];
+            for (chunk.columns) |*col| {
+                const dst_off = rec.row * col.stride;
+                const src_off = last * col.stride;
+                @memcpy(col.data[dst_off .. dst_off + col.stride], col.data[src_off .. src_off + col.stride]);
+            }
+            self.records.items[chunk.entities[rec.row].index].row = rec.row;
+        }
+        chunk.len -= 1;
+        self.records.items[e.index].alive = false;
+        self.records.items[e.index].generation +%= 1;
+        if (self.records.items[e.index].generation == 0) self.records.items[e.index].generation = 1;
+        self.free_indices.append(self.allocator, e.index) catch return error.OutOfMemory;
+        self.live_count -= 1;
+    }
+
+    pub fn queryChunks(self: *DynamicEcsWorld, required_mask: u64, out: *std.ArrayListUnmanaged(*DynamicChunk)) EcsError!void {
+        for (self.archetypes.items) |*arch| {
+            if ((arch.mask & required_mask) == required_mask) {
+                for (arch.chunks.items) |c| {
+                    if (c.len > 0) out.append(self.allocator, c) catch return error.OutOfMemory;
+                }
+            }
+        }
     }
 };
 
@@ -829,4 +1297,53 @@ test "R10 4-Thread Work-Stealing JobSystem parallel chunk execution, cancellatio
         }
     };
     try std.testing.expectError(error.JobFailed, js.parallelFor(16, null, FailCtx{}, FailCtx.exec));
+}
+
+test "R10 DynamicEcsWorld arbitrary @component schemas, structural borrow guards, and PersistentThreadPool reuse" {
+    const allocator = std.testing.allocator;
+    var world = DynamicEcsWorld.init(allocator);
+    defer world.deinit();
+
+    const Health = extern struct { hp: i32, max_hp: i32 };
+    const Damage = extern struct { dps: f32 };
+    const health_id = try world.registerComponent("Health", @sizeOf(Health), @alignOf(Health));
+    const dmg_id = try world.registerComponent("Damage", @sizeOf(Damage), @alignOf(Damage));
+    const mask: u64 = (@as(u64, 1) << @intCast(health_id)) | (@as(u64, 1) << @intCast(dmg_id));
+
+    const e0 = try world.spawn(mask);
+    const e1 = try world.spawn(mask);
+    const h0 = Health{ .hp = 100, .max_hp = 100 };
+    const d0 = Damage{ .dps = 12.5 };
+    try world.setComponentBytes(e0, health_id, std.mem.asBytes(&h0));
+    try world.setComponentBytes(e0, dmg_id, std.mem.asBytes(&d0));
+    const read_h0 = std.mem.bytesAsValue(Health, try world.getComponentBytes(e0, health_id));
+    try std.testing.expectEqual(@as(i32, 100), read_h0.hp);
+
+    // Structural despawn MUST fail with BorrowConflict while a column borrow is active!
+    var chunks: std.ArrayListUnmanaged(*DynamicChunk) = .empty;
+    defer chunks.deinit(allocator);
+    try world.queryChunks(mask, &chunks);
+    try std.testing.expectEqual(@as(usize, 1), chunks.items.len);
+    const hcol = chunks.items[0].findColumn(health_id).?;
+    try hcol.acquireRead();
+    try std.testing.expectError(error.BorrowConflict, world.despawn(e1));
+    hcol.releaseRead();
+    try world.despawn(e1);
+    try std.testing.expectEqual(@as(usize, 1), world.live_count);
+
+    // PersistentThreadPool executes multiple batches on the SAME live OS worker threads!
+    const pool = try PersistentThreadPool.create(allocator, 4);
+    defer pool.destroy();
+    var sums = [_]std.atomic.Value(u32){std.atomic.Value(u32).init(0)} ** 32;
+    const PoolCtx = struct {
+        out: *[32]std.atomic.Value(u32),
+        fn run(c: @This(), idx: usize) !void {
+            _ = c.out[idx].fetchAdd(1, .acq_rel);
+        }
+    };
+    for (0..3) |_| {
+        const st = try pool.parallelFor(32, null, PoolCtx{ .out = &sums }, PoolCtx.run);
+        try std.testing.expectEqual(@as(usize, 32), st.tasks_completed);
+    }
+    for (&sums) |*s| try std.testing.expectEqual(@as(u32, 3), s.load(.acquire));
 }

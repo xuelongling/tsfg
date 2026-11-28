@@ -173,11 +173,13 @@ fn copyDigest71(src: []const u8) HotReloadError![71]u8 {
     return out;
 }
 
-/// Closure value: stores stable `function_id` + GC-managed environment object pointer.
+/// Closure value: stores stable `function_id` + either a generation-checked `ResourceHandle`
+/// or GC-managed environment object pointer (resolved safely across moving minor GC).
 /// NEVER stores raw native function pointers, so hot reload updates closure targets automatically.
 pub const HotClosure = struct {
     function_id: u32,
-    env_obj: ?*gc_mod.GcObject,
+    env_obj: ?*gc_mod.GcObject = null,
+    env_handle: ?rt_mod.ResourceHandle = null,
     capture_layout_hash: [71]u8,
 };
 
@@ -430,14 +432,19 @@ pub const HotReloadRuntime = struct {
     }
 
     /// Invoke a `HotClosure` indirectly via its stable `function_id` (NEVER a raw code address).
-    /// Passes the first scalar of the captured GC environment as `arg1`.
+    /// Resolves `env_handle` through `R06Runtime.handles` when present (relocation-safe across minor GC!),
+    /// falling back to `env_obj` for pinned/direct test fixtures.
     pub fn invokeClosureI32(self: *HotReloadRuntime, closure: HotClosure, arg0: i32) HotReloadError!CallOutcome {
         var lease = try self.acquireLease(closure.function_id);
         defer lease.release();
         if (!std.mem.eql(u8, &lease.desc.capture_layout_hash, &closure.capture_layout_hash)) {
             return error.CaptureLayoutMismatch;
         }
-        const env_val: i32 = if (closure.env_obj) |o| @intCast(@as(i64, @bitCast(o.scalars[0]))) else 0;
+        const resolved_obj: ?*gc_mod.GcObject = if (closure.env_handle) |h|
+            self.rt.handles.resolve(h, null) catch null
+        else
+            closure.env_obj;
+        const env_val: i32 = if (resolved_obj) |o| @intCast(@as(i64, @bitCast(o.scalars[0]))) else 0;
         return self.invokeWithLease(lease, arg0, env_val);
     }
 

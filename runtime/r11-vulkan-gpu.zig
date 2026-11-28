@@ -30,6 +30,7 @@ pub const GpuError = error{
     CorruptPipelineCache,
     DeviceLost,
     InvalidSpirv,
+    InvalidBufferRange,
     FenceTimeout,
     OutOfMemory,
 };
@@ -80,11 +81,27 @@ const VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET: u32 = 35;
 const VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO: u32 = 39;
 const VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO: u32 = 40;
 const VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO: u32 = 42;
+const VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER: u32 = 44;
+
+const VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: u32 = 1;
+const VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: u32 = 2;
+const VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: u32 = 3;
+const VK_PHYSICAL_DEVICE_TYPE_CPU: u32 = 4;
 
 const VK_QUEUE_COMPUTE_BIT: u32 = 0x00000002;
+const VK_BUFFER_USAGE_TRANSFER_SRC_BIT: u32 = 0x00000001;
+const VK_BUFFER_USAGE_TRANSFER_DST_BIT: u32 = 0x00000002;
 const VK_BUFFER_USAGE_STORAGE_BUFFER_BIT: u32 = 0x00000080;
+const VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT: u32 = 0x00000001;
 const VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT: u32 = 0x00000002;
 const VK_MEMORY_PROPERTY_HOST_COHERENT_BIT: u32 = 0x00000004;
+const VK_ACCESS_SHADER_READ_BIT: u32 = 0x00000020;
+const VK_ACCESS_SHADER_WRITE_BIT: u32 = 0x00000040;
+const VK_ACCESS_TRANSFER_READ_BIT: u32 = 0x00000800;
+const VK_ACCESS_TRANSFER_WRITE_BIT: u32 = 0x00001000;
+const VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT: u32 = 0x00000800;
+const VK_PIPELINE_STAGE_TRANSFER_BIT: u32 = 0x00001000;
+const VK_QUEUE_FAMILY_IGNORED: u32 = 0xFFFFFFFF;
 const VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: u32 = 7;
 const VK_SHADER_STAGE_COMPUTE_BIT: u32 = 0x00000020;
 const VK_PIPELINE_BIND_POINT_COMPUTE: u32 = 1;
@@ -257,6 +274,30 @@ const VkWriteDescriptorSet = extern struct {
     pTexelBufferView: ?*const anyopaque = null,
 };
 
+const VkPushConstantRange = extern struct {
+    stageFlags: VkFlags,
+    offset: u32,
+    size: u32,
+};
+
+const VkBufferCopy = extern struct {
+    srcOffset: VkDeviceSize = 0,
+    dstOffset: VkDeviceSize = 0,
+    size: VkDeviceSize,
+};
+
+const VkBufferMemoryBarrier = extern struct {
+    sType: u32 = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+    pNext: ?*const anyopaque = null,
+    srcAccessMask: VkFlags,
+    dstAccessMask: VkFlags,
+    srcQueueFamilyIndex: u32 = VK_QUEUE_FAMILY_IGNORED,
+    dstQueueFamilyIndex: u32 = VK_QUEUE_FAMILY_IGNORED,
+    buffer: VkBuffer,
+    offset: VkDeviceSize = 0,
+    size: VkDeviceSize,
+};
+
 const VkPipelineLayoutCreateInfo = extern struct {
     sType: u32 = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
     pNext: ?*const anyopaque = null,
@@ -264,7 +305,7 @@ const VkPipelineLayoutCreateInfo = extern struct {
     setLayoutCount: u32 = 1,
     pSetLayouts: *const VkDescriptorSetLayout,
     pushConstantRangeCount: u32 = 0,
-    pPushConstantRanges: ?*const anyopaque = null,
+    pPushConstantRanges: ?[*]const VkPushConstantRange = null,
 };
 
 const VkShaderModuleCreateInfo = extern struct {
@@ -389,11 +430,15 @@ const VkFns = struct {
     EndCommandBuffer: *const fn (VkCommandBuffer) callconv(.winapi) VkResult,
     CmdBindPipeline: *const fn (VkCommandBuffer, u32, VkPipeline) callconv(.winapi) void,
     CmdBindDescriptorSets: *const fn (VkCommandBuffer, u32, VkPipelineLayout, u32, u32, *const VkDescriptorSet, u32, ?*const u32) callconv(.winapi) void,
+    CmdPushConstants: *const fn (VkCommandBuffer, VkPipelineLayout, VkFlags, u32, u32, *const anyopaque) callconv(.winapi) void,
+    CmdCopyBuffer: *const fn (VkCommandBuffer, VkBuffer, VkBuffer, u32, *const VkBufferCopy) callconv(.winapi) void,
+    CmdPipelineBarrier: *const fn (VkCommandBuffer, VkFlags, VkFlags, VkFlags, u32, ?*const anyopaque, u32, ?[*]const VkBufferMemoryBarrier, u32, ?*const anyopaque) callconv(.winapi) void,
     CmdDispatch: *const fn (VkCommandBuffer, u32, u32, u32) callconv(.winapi) void,
     CreateFence: *const fn (VkDevice, *const VkFenceCreateInfo, ?*const anyopaque, *VkFence) callconv(.winapi) VkResult,
     DestroyFence: *const fn (VkDevice, VkFence, ?*const anyopaque) callconv(.winapi) void,
     QueueSubmit: *const fn (VkQueue, u32, *const VkSubmitInfo, VkFence) callconv(.winapi) VkResult,
     WaitForFences: *const fn (VkDevice, u32, *const VkFence, VkBool32, u64) callconv(.winapi) VkResult,
+    DeviceWaitIdle: *const fn (VkDevice) callconv(.winapi) VkResult,
 };
 
 fn loadInstFn(comptime T: type, gipa: *const fn (VkInstance, [*:0]const u8) callconv(.winapi) ?FARPROC, inst: VkInstance, name: [:0]const u8) GpuError!T {
@@ -411,7 +456,26 @@ pub const GpuBuffer = struct {
     memory: VkDeviceMemory = 0,
     byte_size: usize = 0,
     alloc_size: usize = 0,
+    is_device_local: bool = false,
 };
+
+pub const DeviceInitOptions = struct {
+    loader_path: []const u8,
+    fallback_icd_path: []const u8 = "",
+    memory_budget_bytes: usize = 64 * 1024 * 1024,
+    prefer_software: bool = false,
+    max_bindings: u32 = 8,
+};
+
+fn rankPhysicalDeviceType(device_type: u32) u32 {
+    return switch (device_type) {
+        VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU => 100,
+        VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU => 80,
+        VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU => 60,
+        VK_PHYSICAL_DEVICE_TYPE_CPU => 20,
+        else => 10,
+    };
+}
 
 pub const KernelVersion = struct {
     version: u64,
@@ -440,9 +504,12 @@ pub const VulkanGpuDevice = struct {
     queue_family: u32 = 0,
     mem_props: VkPhysicalDeviceMemoryProperties = undefined,
     device_name: [256]u8 = [_]u8{0} ** 256,
+    device_type: u32 = 0,
+    used_fallback_icd: bool = false,
     api_version: u32 = 0,
     supports_f64: bool = false,
     device_lost: bool = false,
+    max_bindings: u32 = 8,
 
     desc_layout: VkDescriptorSetLayout = 0,
     desc_pool: VkDescriptorPool = 0,
@@ -467,14 +534,35 @@ pub const VulkanGpuDevice = struct {
         icd_json_path: []const u8,
         memory_budget_bytes: usize,
     ) GpuError!VulkanGpuDevice {
-        // Direct Vulkan loader exclusively to the locked private Lavapipe ICD!
+        return initWithOptions(allocator, .{
+            .loader_path = loader_path,
+            .fallback_icd_path = icd_json_path,
+            .memory_budget_bytes = memory_budget_bytes,
+            .prefer_software = icd_json_path.len > 0,
+        });
+    }
+
+    /// Hardware-first Windows Vulkan 1.3 initialization:
+    ///   1. When `prefer_software == false`, probes system Vulkan loader WITHOUT overriding
+    ///      `VK_ICD_FILENAMES`, selecting DISCRETE_GPU > INTEGRATED_GPU > VIRTUAL_GPU > CPU.
+    ///   2. Falls back cleanly to `fallback_icd_path` (e.g. bundled Lavapipe) only if no
+    ///      compute-capable hardware GPU exists on the host or `prefer_software == true`.
+    pub fn initWithOptions(
+        allocator: std.mem.Allocator,
+        opts: DeviceInitOptions,
+    ) GpuError!VulkanGpuDevice {
         const w_env_name = std.unicode.utf8ToUtf16LeAllocZ(allocator, "VK_ICD_FILENAMES") catch return error.OutOfMemory;
         defer allocator.free(w_env_name);
-        const w_icd = std.unicode.utf8ToUtf16LeAllocZ(allocator, icd_json_path) catch return error.OutOfMemory;
-        defer allocator.free(w_icd);
-        _ = SetEnvironmentVariableW(w_env_name, w_icd);
 
-        const w_loader = std.unicode.utf8ToUtf16LeAllocZ(allocator, loader_path) catch return error.OutOfMemory;
+        var used_fallback = false;
+        if (opts.prefer_software and opts.fallback_icd_path.len > 0) {
+            const w_icd = std.unicode.utf8ToUtf16LeAllocZ(allocator, opts.fallback_icd_path) catch return error.OutOfMemory;
+            defer allocator.free(w_icd);
+            _ = SetEnvironmentVariableW(w_env_name, w_icd);
+            used_fallback = true;
+        }
+
+        const w_loader = std.unicode.utf8ToUtf16LeAllocZ(allocator, opts.loader_path) catch return error.OutOfMemory;
         defer allocator.free(w_loader);
         const loader = LoadLibraryW(w_loader) orelse return error.LoaderMissing;
         errdefer _ = FreeLibrary(loader);
@@ -487,12 +575,38 @@ pub const VulkanGpuDevice = struct {
         const inst_ci = VkInstanceCreateInfo{ .pApplicationInfo = &app_info };
         var instance: VkInstance = null;
         if (create_inst(&inst_ci, null, &instance) != VK_SUCCESS or instance == null) {
-            return error.VulkanCallFailed;
+            if (!used_fallback and opts.fallback_icd_path.len > 0) {
+                const w_icd = std.unicode.utf8ToUtf16LeAllocZ(allocator, opts.fallback_icd_path) catch return error.OutOfMemory;
+                defer allocator.free(w_icd);
+                _ = SetEnvironmentVariableW(w_env_name, w_icd);
+                used_fallback = true;
+                if (create_inst(&inst_ci, null, &instance) != VK_SUCCESS or instance == null) return error.VulkanCallFailed;
+            } else {
+                return error.VulkanCallFailed;
+            }
         }
-        const destroy_inst = try loadInstFn(@TypeOf(@as(VkFns, undefined).DestroyInstance), gipa, instance, "vkDestroyInstance");
+        var destroy_inst = try loadInstFn(@TypeOf(@as(VkFns, undefined).DestroyInstance), gipa, instance, "vkDestroyInstance");
         errdefer destroy_inst(instance, null);
 
-        const enum_phys = try loadInstFn(@TypeOf(@as(VkFns, undefined).EnumeratePhysicalDevices), gipa, instance, "vkEnumeratePhysicalDevices");
+        var enum_phys = try loadInstFn(@TypeOf(@as(VkFns, undefined).EnumeratePhysicalDevices), gipa, instance, "vkEnumeratePhysicalDevices");
+        var dev_count: u32 = 0;
+        var enum_ok = (enum_phys(instance, &dev_count, null) == VK_SUCCESS and dev_count > 0);
+        if (!enum_ok and !used_fallback and opts.fallback_icd_path.len > 0) {
+            // Hardware-first found zero Vulkan devices on this host -> cleanly retry with fallback ICD!
+            destroy_inst(instance, null);
+            instance = null;
+            const w_icd = std.unicode.utf8ToUtf16LeAllocZ(allocator, opts.fallback_icd_path) catch return error.OutOfMemory;
+            defer allocator.free(w_icd);
+            _ = SetEnvironmentVariableW(w_env_name, w_icd);
+            used_fallback = true;
+            if (create_inst(&inst_ci, null, &instance) != VK_SUCCESS or instance == null) return error.NoVulkanDevice;
+            destroy_inst = try loadInstFn(@TypeOf(@as(VkFns, undefined).DestroyInstance), gipa, instance, "vkDestroyInstance");
+            enum_phys = try loadInstFn(@TypeOf(@as(VkFns, undefined).EnumeratePhysicalDevices), gipa, instance, "vkEnumeratePhysicalDevices");
+            dev_count = 0;
+            enum_ok = (enum_phys(instance, &dev_count, null) == VK_SUCCESS and dev_count > 0);
+        }
+        if (!enum_ok) return error.NoVulkanDevice;
+
         const get_props = try loadInstFn(@TypeOf(@as(VkFns, undefined).GetPhysicalDeviceProperties), gipa, instance, "vkGetPhysicalDeviceProperties");
         const get_feats = try loadInstFn(@TypeOf(@as(VkFns, undefined).GetPhysicalDeviceFeatures), gipa, instance, "vkGetPhysicalDeviceFeatures");
         const get_mem = try loadInstFn(@TypeOf(@as(VkFns, undefined).GetPhysicalDeviceMemoryProperties), gipa, instance, "vkGetPhysicalDeviceMemoryProperties");
@@ -500,21 +614,24 @@ pub const VulkanGpuDevice = struct {
         const create_dev = try loadInstFn(@TypeOf(@as(VkFns, undefined).CreateDevice), gipa, instance, "vkCreateDevice");
         const gdpa = try loadInstFn(@TypeOf(@as(VkFns, undefined).GetDeviceProcAddr), gipa, instance, "vkGetDeviceProcAddr");
 
-        var dev_count: u32 = 0;
-        if (enum_phys(instance, &dev_count, null) != VK_SUCCESS or dev_count == 0) return error.NoVulkanDevice;
-        var phys_list: [8]VkPhysicalDevice = undefined;
-        dev_count = @min(dev_count, 8);
+        var phys_list: [16]VkPhysicalDevice = undefined;
+        dev_count = @min(dev_count, 16);
         if (enum_phys(instance, &dev_count, &phys_list) != VK_SUCCESS or dev_count == 0) return error.NoVulkanDevice;
 
-        // Prefer software Lavapipe (`llvmpipe`) device if multiple are enumerated
+        // Hardware-first physical device ranking (or software llvmpipe when prefer_software is explicit)
         var physical = phys_list[0];
+        var best_score: u32 = 0;
         var props: VkPhysicalDeviceProperties = undefined;
         for (phys_list[0..dev_count]) |p| {
             get_props(p, &props);
             const name_slice = std.mem.sliceTo(&props.deviceName, 0);
-            if (std.mem.indexOf(u8, name_slice, "llvmpipe") != null) {
+            var score = rankPhysicalDeviceType(props.deviceType);
+            if (opts.prefer_software and std.mem.indexOf(u8, name_slice, "llvmpipe") != null) {
+                score = 1000;
+            }
+            if (score > best_score) {
+                best_score = score;
                 physical = p;
-                break;
             }
         }
         get_props(physical, &props);
@@ -538,9 +655,18 @@ pub const VulkanGpuDevice = struct {
         }
         const compute_qf = qf_idx orelse return error.NoComputeQueue;
 
+        // Enable negotiated supported device features (e.g. shaderFloat64) in VkDeviceCreateInfo!
+        var enabled_feats = VkPhysicalDeviceFeatures{ .features = [_]VkBool32{0} ** 55 };
+        if (feats.features[36] != 0) {
+            enabled_feats.features[36] = 1; // shaderFloat64
+        }
+
         const prio: f32 = 1.0;
         const qci = VkDeviceQueueCreateInfo{ .queueFamilyIndex = compute_qf, .pQueuePriorities = &prio };
-        const dci = VkDeviceCreateInfo{ .pQueueCreateInfos = &qci };
+        const dci = VkDeviceCreateInfo{
+            .pQueueCreateInfos = &qci,
+            .pEnabledFeatures = &enabled_feats,
+        };
         var device: VkDevice = null;
         if (create_dev(physical, &dci, null, &device) != VK_SUCCESS or device == null) {
             return error.VulkanCallFailed;
@@ -591,13 +717,18 @@ pub const VulkanGpuDevice = struct {
             .EndCommandBuffer = try loadDevFn(@TypeOf(@as(VkFns, undefined).EndCommandBuffer), gdpa, device, "vkEndCommandBuffer"),
             .CmdBindPipeline = try loadDevFn(@TypeOf(@as(VkFns, undefined).CmdBindPipeline), gdpa, device, "vkCmdBindPipeline"),
             .CmdBindDescriptorSets = try loadDevFn(@TypeOf(@as(VkFns, undefined).CmdBindDescriptorSets), gdpa, device, "vkCmdBindDescriptorSets"),
+            .CmdPushConstants = try loadDevFn(@TypeOf(@as(VkFns, undefined).CmdPushConstants), gdpa, device, "vkCmdPushConstants"),
+            .CmdCopyBuffer = try loadDevFn(@TypeOf(@as(VkFns, undefined).CmdCopyBuffer), gdpa, device, "vkCmdCopyBuffer"),
+            .CmdPipelineBarrier = try loadDevFn(@TypeOf(@as(VkFns, undefined).CmdPipelineBarrier), gdpa, device, "vkCmdPipelineBarrier"),
             .CmdDispatch = try loadDevFn(@TypeOf(@as(VkFns, undefined).CmdDispatch), gdpa, device, "vkCmdDispatch"),
             .CreateFence = try loadDevFn(@TypeOf(@as(VkFns, undefined).CreateFence), gdpa, device, "vkCreateFence"),
             .DestroyFence = try loadDevFn(@TypeOf(@as(VkFns, undefined).DestroyFence), gdpa, device, "vkDestroyFence"),
             .QueueSubmit = try loadDevFn(@TypeOf(@as(VkFns, undefined).QueueSubmit), gdpa, device, "vkQueueSubmit"),
             .WaitForFences = try loadDevFn(@TypeOf(@as(VkFns, undefined).WaitForFences), gdpa, device, "vkWaitForFences"),
+            .DeviceWaitIdle = try loadDevFn(@TypeOf(@as(VkFns, undefined).DeviceWaitIdle), gdpa, device, "vkDeviceWaitIdle"),
         };
 
+        const n_bindings = @min(@max(opts.max_bindings, 3), 8);
         var self = VulkanGpuDevice{
             .allocator = allocator,
             .loader = loader,
@@ -608,9 +739,12 @@ pub const VulkanGpuDevice = struct {
             .queue_family = compute_qf,
             .mem_props = mem_props,
             .device_name = props.deviceName,
+            .device_type = props.deviceType,
+            .used_fallback_icd = used_fallback,
             .api_version = props.apiVersion,
-            .supports_f64 = feats.features[36] != 0, // shaderFloat64 index in VkPhysicalDeviceFeatures
-            .memory_budget_bytes = memory_budget_bytes,
+            .supports_f64 = feats.features[36] != 0,
+            .max_bindings = n_bindings,
+            .memory_budget_bytes = opts.memory_budget_bytes,
         };
         errdefer {
             if (self.cmd_pool != 0) vk.DestroyCommandPool(device, self.cmd_pool, null);
@@ -622,25 +756,37 @@ pub const VulkanGpuDevice = struct {
         }
         vk.GetDeviceQueue(device, compute_qf, 0, &self.queue);
 
-        // Create descriptor set layout (3 storage buffers: a, b, out)
-        const bindings = [_]VkDescriptorSetLayoutBinding{
-            .{ .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT },
-            .{ .binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT },
-            .{ .binding = 2, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT },
-        };
-        const dsl_ci = VkDescriptorSetLayoutCreateInfo{ .bindingCount = 3, .pBindings = &bindings };
+        var bindings: [8]VkDescriptorSetLayoutBinding = undefined;
+        for (0..n_bindings) |bi| {
+            bindings[bi] = .{
+                .binding = @intCast(bi),
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            };
+        }
+        const dsl_ci = VkDescriptorSetLayoutCreateInfo{ .bindingCount = n_bindings, .pBindings = &bindings };
         if (vk.CreateDescriptorSetLayout(device, &dsl_ci, null, &self.desc_layout) != VK_SUCCESS) return error.VulkanCallFailed;
 
-        const pool_size = [_]VkDescriptorPoolSize{.{ .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 16 }};
+        const pool_size = [_]VkDescriptorPoolSize{.{ .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 512 }};
         const dp_ci = VkDescriptorPoolCreateInfo{
             .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-            .maxSets = 4,
+            .maxSets = 64,
             .poolSizeCount = 1,
             .pPoolSizes = &pool_size,
         };
         if (vk.CreateDescriptorPool(device, &dp_ci, null, &self.desc_pool) != VK_SUCCESS) return error.VulkanCallFailed;
 
-        const pl_ci = VkPipelineLayoutCreateInfo{ .pSetLayouts = &self.desc_layout };
+        const pc_range = [_]VkPushConstantRange{.{
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            .offset = 0,
+            .size = 64,
+        }};
+        const pl_ci = VkPipelineLayoutCreateInfo{
+            .pSetLayouts = &self.desc_layout,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &pc_range,
+        };
         if (vk.CreatePipelineLayout(device, &pl_ci, null, &self.pipe_layout) != VK_SUCCESS) return error.VulkanCallFailed;
 
         const pc_ci = VkPipelineCacheCreateInfo{};
@@ -653,6 +799,9 @@ pub const VulkanGpuDevice = struct {
     }
 
     pub fn deinit(self: *VulkanGpuDevice) void {
+        if (self.device != null and !self.device_lost) {
+            _ = self.vk.DeviceWaitIdle(self.device);
+        }
         if (self.current_kernel) |k| {
             self.destroyKernelVersion(k);
             self.current_kernel = null;
@@ -742,12 +891,35 @@ pub const VulkanGpuDevice = struct {
         return error.NoMemoryType;
     }
 
+    fn findDeviceLocalMemType(self: *const VulkanGpuDevice, type_bits: u32) ?struct { idx: u32, host_visible: bool } {
+        // First prefer pure DEVICE_LOCAL (fastest VRAM on discrete GPUs)
+        for (0..self.mem_props.memoryTypeCount) |i| {
+            const bit = @as(u32, 1) << @intCast(i);
+            const flags = self.mem_props.memoryTypes[i].propertyFlags;
+            if ((type_bits & bit) != 0 and (flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 and (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0) {
+                return .{ .idx = @intCast(i), .host_visible = false };
+            }
+        }
+        // Fallback: DEVICE_LOCAL | HOST_VISIBLE (integrated GPU / Lavapipe unified memory)
+        const both = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        for (0..self.mem_props.memoryTypeCount) |i| {
+            const bit = @as(u32, 1) << @intCast(i);
+            if ((type_bits & bit) != 0 and (self.mem_props.memoryTypes[i].propertyFlags & both) == both) {
+                return .{ .idx = @intCast(i), .host_visible = true };
+            }
+        }
+        return null;
+    }
+
     pub fn createBuffer(self: *VulkanGpuDevice, byte_size: usize) GpuError!GpuBuffer {
         if (self.device_lost) return error.DeviceLost;
         if (self.memory_used_bytes + byte_size > self.memory_budget_bytes) {
             return error.GpuOutOfMemory;
         }
-        const bci = VkBufferCreateInfo{ .size = byte_size, .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT };
+        const bci = VkBufferCreateInfo{
+            .size = byte_size,
+            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        };
         var buf: VkBuffer = 0;
         if (self.vk.CreateBuffer(self.device, &bci, null, &buf) != VK_SUCCESS) return error.VulkanCallFailed;
         errdefer self.vk.DestroyBuffer(self.device, buf, null);
@@ -766,7 +938,90 @@ pub const VulkanGpuDevice = struct {
         if (self.vk.BindBufferMemory(self.device, buf, mem, 0) != VK_SUCCESS) return error.VulkanCallFailed;
         const alloc_sz: usize = @intCast(req.size);
         self.memory_used_bytes += alloc_sz;
-        return .{ .buffer = buf, .memory = mem, .byte_size = byte_size, .alloc_size = alloc_sz };
+        return .{ .buffer = buf, .memory = mem, .byte_size = byte_size, .alloc_size = alloc_sz, .is_device_local = false };
+    }
+
+    /// Allocate a `DEVICE_LOCAL` storage buffer (uses explicit staging + `vkCmdCopyBuffer` +
+    /// `vkCmdPipelineBarrier` on discrete GPUs; direct coherent memory on unified/software devices).
+    pub fn createDeviceLocalBuffer(self: *VulkanGpuDevice, byte_size: usize) GpuError!GpuBuffer {
+        if (self.device_lost) return error.DeviceLost;
+        if (self.memory_used_bytes + byte_size > self.memory_budget_bytes) return error.GpuOutOfMemory;
+        const bci = VkBufferCreateInfo{
+            .size = byte_size,
+            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        };
+        var buf: VkBuffer = 0;
+        if (self.vk.CreateBuffer(self.device, &bci, null, &buf) != VK_SUCCESS) return error.VulkanCallFailed;
+        errdefer self.vk.DestroyBuffer(self.device, buf, null);
+
+        var req: VkMemoryRequirements = undefined;
+        self.vk.GetBufferMemoryRequirements(self.device, buf, &req);
+        if (self.memory_used_bytes + req.size > self.memory_budget_bytes) return error.GpuOutOfMemory;
+
+        const chosen = self.findDeviceLocalMemType(req.memoryTypeBits) orelse .{
+            .idx = try self.findHostVisibleMemType(req.memoryTypeBits),
+            .host_visible = true,
+        };
+        const mai = VkMemoryAllocateInfo{ .allocationSize = req.size, .memoryTypeIndex = chosen.idx };
+        var mem: VkDeviceMemory = 0;
+        if (self.vk.AllocateMemory(self.device, &mai, null, &mem) != VK_SUCCESS) return error.GpuOutOfMemory;
+        errdefer self.vk.FreeMemory(self.device, mem, null);
+
+        if (self.vk.BindBufferMemory(self.device, buf, mem, 0) != VK_SUCCESS) return error.VulkanCallFailed;
+        const alloc_sz: usize = @intCast(req.size);
+        self.memory_used_bytes += alloc_sz;
+        return .{ .buffer = buf, .memory = mem, .byte_size = byte_size, .alloc_size = alloc_sz, .is_device_local = !chosen.host_visible };
+    }
+
+    fn copyBufferWithBarrier(
+        self: *VulkanGpuDevice,
+        src_buf: VkBuffer,
+        dst_buf: VkBuffer,
+        byte_len: usize,
+        upload: bool,
+    ) GpuError!void {
+        var cmd: VkCommandBuffer = null;
+        const cb_ai = VkCommandBufferAllocateInfo{ .commandPool = self.cmd_pool };
+        if (self.vk.AllocateCommandBuffers(self.device, &cb_ai, &cmd) != VK_SUCCESS or cmd == null) return error.VulkanCallFailed;
+        defer self.vk.FreeCommandBuffers(self.device, self.cmd_pool, 1, &cmd);
+
+        const begin_info = VkCommandBufferBeginInfo{};
+        if (self.vk.BeginCommandBuffer(cmd, &begin_info) != VK_SUCCESS) return error.VulkanCallFailed;
+        if (!upload) {
+            const pre_bar = [_]VkBufferMemoryBarrier{.{
+                .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+                .buffer = src_buf,
+                .size = byte_len,
+            }};
+            self.vk.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, null, 1, &pre_bar, 0, null);
+        }
+        const region = VkBufferCopy{ .size = byte_len };
+        self.vk.CmdCopyBuffer(cmd, src_buf, dst_buf, 1, &region);
+        if (upload) {
+            const post_bar = [_]VkBufferMemoryBarrier{.{
+                .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                .buffer = dst_buf,
+                .size = byte_len,
+            }};
+            self.vk.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, null, 1, &post_bar, 0, null);
+        }
+        if (self.vk.EndCommandBuffer(cmd) != VK_SUCCESS) return error.VulkanCallFailed;
+
+        const fci = VkFenceCreateInfo{};
+        var fence: VkFence = 0;
+        if (self.vk.CreateFence(self.device, &fci, null, &fence) != VK_SUCCESS) return error.VulkanCallFailed;
+        defer self.vk.DestroyFence(self.device, fence, null);
+
+        const sub = VkSubmitInfo{ .pCommandBuffers = &cmd };
+        const qres = self.vk.QueueSubmit(self.queue, 1, &sub, fence);
+        if (qres == VK_ERROR_DEVICE_LOST) {
+            self.device_lost = true;
+            return error.DeviceLost;
+        }
+        if (qres != VK_SUCCESS) return error.VulkanCallFailed;
+        if (self.vk.WaitForFences(self.device, 1, &fence, 1, 10_000_000_000) != VK_SUCCESS) return error.FenceTimeout;
     }
 
     pub fn destroyBuffer(self: *VulkanGpuDevice, b: *GpuBuffer) void {
@@ -782,6 +1037,15 @@ pub const VulkanGpuDevice = struct {
 
     pub fn uploadBytes(self: *VulkanGpuDevice, b: GpuBuffer, src: []const u8) GpuError!void {
         if (self.device_lost) return error.DeviceLost;
+        if (src.len > b.byte_size) return error.InvalidBufferRange;
+        if (src.len == 0) return;
+        if (b.is_device_local) {
+            var staging = try self.createBuffer(src.len);
+            defer self.destroyBuffer(&staging);
+            try self.uploadBytes(staging, src);
+            try self.copyBufferWithBarrier(staging.buffer, b.buffer, src.len, true);
+            return;
+        }
         var mapped: ?*anyopaque = null;
         if (self.vk.MapMemory(self.device, b.memory, 0, src.len, 0, &mapped) != VK_SUCCESS or mapped == null) {
             return error.VulkanCallFailed;
@@ -793,6 +1057,15 @@ pub const VulkanGpuDevice = struct {
 
     pub fn downloadBytes(self: *VulkanGpuDevice, b: GpuBuffer, dst: []u8) GpuError!void {
         if (self.device_lost) return error.DeviceLost;
+        if (dst.len > b.byte_size) return error.InvalidBufferRange;
+        if (dst.len == 0) return;
+        if (b.is_device_local) {
+            var staging = try self.createBuffer(dst.len);
+            defer self.destroyBuffer(&staging);
+            try self.copyBufferWithBarrier(b.buffer, staging.buffer, dst.len, false);
+            try self.downloadBytes(staging, dst);
+            return;
+        }
         var mapped: ?*anyopaque = null;
         if (self.vk.MapMemory(self.device, b.memory, 0, dst.len, 0, &mapped) != VK_SUCCESS or mapped == null) {
             return error.VulkanCallFailed;
@@ -850,7 +1123,23 @@ pub const VulkanGpuDevice = struct {
         buf_out: GpuBuffer,
         group_count_x: u32,
     ) GpuError!InFlightDispatch {
+        const bufs = [_]GpuBuffer{ buf_a, buf_b, buf_out };
+        return self.dispatchBuffers(&bufs, group_count_x, 1, 1, &.{});
+    }
+
+    /// Generalized compute dispatch supporting 1..8 storage buffer bindings, 1D/2D/3D workgroups,
+    /// and up to 64 bytes of Push Constants.
+    pub fn dispatchBuffers(
+        self: *VulkanGpuDevice,
+        buffers: []const GpuBuffer,
+        group_count_x: u32,
+        group_count_y: u32,
+        group_count_z: u32,
+        push_constants: []const u8,
+    ) GpuError!InFlightDispatch {
         if (self.device_lost) return error.DeviceLost;
+        if (buffers.len == 0 or buffers.len > self.max_bindings) return error.InvalidBufferRange;
+        if (push_constants.len > 64) return error.InvalidBufferRange;
         const kv = self.current_kernel orelse return error.InvalidSpirv;
 
         var dset: VkDescriptorSet = 0;
@@ -858,15 +1147,13 @@ pub const VulkanGpuDevice = struct {
         if (self.vk.AllocateDescriptorSets(self.device, &ds_ai, &dset) != VK_SUCCESS) return error.VulkanCallFailed;
         errdefer _ = self.vk.FreeDescriptorSets(self.device, self.desc_pool, 1, &dset);
 
-        const bi_a = VkDescriptorBufferInfo{ .buffer = buf_a.buffer, .range = buf_a.byte_size };
-        const bi_b = VkDescriptorBufferInfo{ .buffer = buf_b.buffer, .range = buf_b.byte_size };
-        const bi_o = VkDescriptorBufferInfo{ .buffer = buf_out.buffer, .range = buf_out.byte_size };
-        const writes = [_]VkWriteDescriptorSet{
-            .{ .dstSet = dset, .dstBinding = 0, .pBufferInfo = &bi_a },
-            .{ .dstSet = dset, .dstBinding = 1, .pBufferInfo = &bi_b },
-            .{ .dstSet = dset, .dstBinding = 2, .pBufferInfo = &bi_o },
-        };
-        self.vk.UpdateDescriptorSets(self.device, 3, &writes, 0, null);
+        var buf_infos: [8]VkDescriptorBufferInfo = undefined;
+        var writes: [8]VkWriteDescriptorSet = undefined;
+        for (buffers, 0..) |b, i| {
+            buf_infos[i] = .{ .buffer = b.buffer, .range = b.byte_size };
+            writes[i] = .{ .dstSet = dset, .dstBinding = @intCast(i), .pBufferInfo = &buf_infos[i] };
+        }
+        self.vk.UpdateDescriptorSets(self.device, @intCast(buffers.len), &writes, 0, null);
 
         var cmd: VkCommandBuffer = null;
         const cb_ai = VkCommandBufferAllocateInfo{ .commandPool = self.cmd_pool };
@@ -877,7 +1164,10 @@ pub const VulkanGpuDevice = struct {
         if (self.vk.BeginCommandBuffer(cmd, &begin_info) != VK_SUCCESS) return error.VulkanCallFailed;
         self.vk.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kv.pipeline);
         self.vk.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, self.pipe_layout, 0, 1, &dset, 0, null);
-        self.vk.CmdDispatch(cmd, group_count_x, 1, 1);
+        if (push_constants.len > 0) {
+            self.vk.CmdPushConstants(cmd, self.pipe_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, @intCast(push_constants.len), push_constants.ptr);
+        }
+        self.vk.CmdDispatch(cmd, @max(group_count_x, 1), @max(group_count_y, 1), @max(group_count_z, 1));
         if (self.vk.EndCommandBuffer(cmd) != VK_SUCCESS) return error.VulkanCallFailed;
 
         const fci = VkFenceCreateInfo{};
