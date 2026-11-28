@@ -144,18 +144,21 @@ export function lowerStringCoreToLlvm(canonMlirText) {
     }
 
     const llBlocks = [];
+    const blockEndLabel = new Map();
     let tmpCounter = 0;
+    let hasFuelAbort = false;
     const tmp = () => `%_t${tmpCounter++}`;
 
     for (let bi = 0; bi < blocks.length; bi++) {
       const blk = blocks[bi];
+      let curLabel = blk.label;
       const llOps = [];
-      // Emit phi nodes for non-entry blocks with parameters
+      // Emit phi nodes for non-entry blocks with parameters (using deferred end-label token)
       if (bi > 0 && blk.params.length > 0) {
         const edges = incoming.get(blk.label);
         for (let pi = 0; pi < blk.params.length; pi++) {
           const p = blk.params[pi];
-          const pairs = edges.map((e) => `[ ${sanitizeReg(e.args[pi])}, %${e.from} ]`).join(', ');
+          const pairs = edges.map((e) => `[ ${sanitizeReg(e.args[pi])}, %__END_OF_${e.from}__ ]`).join(', ');
           llOps.push(`  ${sanitizeReg(p.reg)} = phi ${p.llvm} ${pairs}`);
         }
       }
@@ -164,7 +167,14 @@ export function lowerStringCoreToLlvm(canonMlirText) {
         const anc = parseAnchor(s);
         if (s.includes('"tsfg_core.fuel"')) {
           const ok = tmp();
+          const bad = tmp();
+          const cont = `fuel_ok_${tmpCounter++}`;
+          hasFuelAbort = true;
           llOps.push(`  ${ok} = call i32 @tsfg_aot_str_fuel(ptr %ctx, i32 ${anc.start}, i32 ${anc.end})`);
+          llOps.push(`  ${bad} = icmp eq i32 ${ok}, 0`);
+          llOps.push(`  br i1 ${bad}, label %fn_fuel_abort, label %${cont}`);
+          llOps.push(`${cont}:`);
+          curLabel = cont;
           continue;
         }
         if (s.includes('"tsfg_core.global_store"')) {
@@ -249,12 +259,20 @@ export function lowerStringCoreToLlvm(canonMlirText) {
           throw new Error(`unsupported string AOT op: ${opName}`);
         }
       }
+      blockEndLabel.set(blk.label, curLabel);
       llBlocks.push(`${blk.label}:\n${llOps.join('\n')}`);
     }
 
+    if (hasFuelAbort) {
+      llBlocks.push(`fn_fuel_abort:\n  ret ${retLlvm} 0`);
+    }
+    const resolvedBlocks = llBlocks.map((b) =>
+      b.replace(/%__END_OF_(\w+)__/g, (_, name) => `%${blockEndLabel.get(name) ?? name}`),
+    );
+
     const entryParams = blocks[0].params;
     const sigParams = ['ptr %ctx', ...entryParams.map((p) => `${p.llvm} ${sanitizeReg(p.reg)}`)];
-    fnDefs.push(`define ${retLlvm} @${llvmSym}(${sigParams.join(', ')}) {\n${llBlocks.join('\n')}\n}`);
+    fnDefs.push(`define ${retLlvm} @${llvmSym}(${sigParams.join(', ')}) {\n${resolvedBlocks.join('\n')}\n}`);
     functions.push({
       name: logicalName,
       sym: rawSym,

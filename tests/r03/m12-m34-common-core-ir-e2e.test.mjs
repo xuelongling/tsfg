@@ -629,3 +629,83 @@ export function illegalNullNum(x: i32 | null): i32 {
     'direct numeric consumption of i32 | null must be statically rejected',
   );
 });
+
+test('E2E Live Raw TypeScript -> 4-way VM === Windows x86-64 AOT (INT32_MIN % -1 === 0, INT32_MIN / -1 trap, ReadSpan.length, non-null ! trap)', async () => {
+  const edgeTs = `
+export function divPair(a: i32, b: i32): i32 {
+  return a / b;
+}
+
+export function nonNullPlus(x: i32 | undefined): i32 {
+  return x! + 5;
+}
+
+export function remPair(a: i32, b: i32): i32 {
+  return a % b;
+}
+
+export function spanLenCheck(): i32 {
+  const a: i32[] = [10, 20, 30, 40];
+  const s: ReadSpan<i32> = readSpan(a, 1, 2);
+  let n: i32 = 0;
+  let i: u32 = 0;
+  while (i < s.length) {
+    n = n + 100;
+    i = i + 1;
+  }
+  return n + s[1];
+}
+`;
+  const { canonMlir, optMlir } = compileLiveRawTypeScriptToCoreMlir(edgeTs, ['divPair', 'nonNullPlus', 'remPair', 'spanLenCheck']);
+
+  const runVm = (mlir) => {
+    const vm = new CommonCoreVm(mlir);
+    const remMin = vm.callExport('remPair', [-2147483648, -1]);
+    const divMinTrap = vm.callExport('divPair', [-2147483648, -1]);
+    const spLen = vm.callExport('spanLenCheck', []);
+    const nnOk = vm.callExport('nonNullPlus', [17]);
+    const nnTrap = vm.callExport('nonNullPlus', [undefined]);
+    return {
+      remMin: remMin.i32,
+      divMinTrap: divMinTrap.trap,
+      spLen: spLen.i32,
+      nnOk: nnOk.i32,
+      nnTrap: nnTrap.trap,
+    };
+  };
+
+  const buildDriver = ({ exports }) => `${C_COMMON_EXTERNS}
+extern void ${exports.divPair.sym}(void *, uint16_t *, uint64_t *, uint16_t, uint64_t, uint16_t, uint64_t);
+extern void ${exports.remPair.sym}(void *, uint16_t *, uint64_t *, uint16_t, uint64_t, uint16_t, uint64_t);
+extern void ${exports.spanLenCheck.sym}(void *, uint16_t *, uint64_t *);
+extern void ${exports.nonNullPlus.sym}(void *, uint16_t *, uint64_t *, uint16_t, uint64_t);
+int main(void) {
+  void *e = tsfg_eng_create();
+  aot_cmn_bootstrap(e);
+  uint16_t t; uint64_t remMin, spLen, nnOk, dummy;
+  ${exports.remPair.sym}(e, &t, &remMin, 3, 0x80000000ULL, 3, 0xFFFFFFFFULL);
+  ${exports.divPair.sym}(e, &t, &dummy, 3, 0x80000000ULL, 3, 0xFFFFFFFFULL);
+  uint32_t divMinTrap = tsfg_eng_trap(e);
+  tsfg_eng_reset(e, 100000, 64);
+  ${exports.spanLenCheck.sym}(e, &t, &spLen);
+  ${exports.nonNullPlus.sym}(e, &t, &nnOk, 3, 17);
+  ${exports.nonNullPlus.sym}(e, &t, &dummy, 0, 0);
+  uint32_t nnTrap = tsfg_eng_trap(e);
+  printf("{\\"remMin\\":%d,\\"divMinTrap\\":%u,\\"spLen\\":%d,\\"nnOk\\":%d,\\"nnTrap\\":%u}\\n",
+         (int32_t)remMin, divMinTrap, (int32_t)spLen, (int32_t)nnOk, nnTrap);
+  tsfg_eng_destroy(e);
+  return 0;
+}`;
+
+  const expected = {
+    remMin: 0,
+    divMinTrap: TRAP.div_zero,
+    spLen: 230,
+    nnOk: 22,
+    nnTrap: TRAP.undefined_numeric,
+  };
+  assert.deepEqual(runVm(canonMlir), expected);
+  assert.deepEqual(runVm(optMlir), expected);
+  assert.deepEqual(await compileAndRunCommonAot('live-edge-unopt', canonMlir, buildDriver), expected);
+  assert.deepEqual(await compileAndRunCommonAot('live-edge-opt', optMlir, buildDriver), expected);
+});

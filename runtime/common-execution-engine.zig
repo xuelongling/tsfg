@@ -911,6 +911,20 @@ pub const Engine = struct {
         return @intCast(self.spans.items.len);
     }
 
+    pub fn spanLen(self: *Engine, span_id: u64) u32 {
+        if (self.isAborted()) return 0;
+        if (span_id == 0 or span_id > self.spans.items.len) {
+            self.setTrap(.span_expired);
+            return 0;
+        }
+        const sp = &self.spans.items[@intCast(span_id - 1)];
+        if (!sp.live) {
+            self.setTrap(.span_expired);
+            return 0;
+        }
+        return sp.len;
+    }
+
     pub fn spanGet(self: *Engine, span_id: u64, idx: u32) TaggedValue {
         if (self.isAborted()) return TaggedValue.undef();
         if (span_id == 0 or span_id > self.spans.items.len) {
@@ -1179,6 +1193,13 @@ export fn tsfg_eng_read_elem_tag(e: ?*Engine, recv_tag: u16, recv_id: u64, idx: 
     const eng = e orelse return 0;
     if (recv_tag == @intFromEnum(Tag.span)) return eng.spanGet(recv_id, idx).tag;
     if (recv_tag == @intFromEnum(Tag.array)) return eng.arrayGet(recv_id, idx).tag;
+    eng.setTrap(.invalid_handle);
+    return 0;
+}
+export fn tsfg_eng_recv_len(e: ?*Engine, recv_tag: u16, recv_id: u64) u32 {
+    const eng = e orelse return 0;
+    if (recv_tag == @intFromEnum(Tag.span)) return eng.spanLen(recv_id);
+    if (recv_tag == @intFromEnum(Tag.array)) return eng.arrayLen(recv_id);
     eng.setTrap(.invalid_handle);
     return 0;
 }

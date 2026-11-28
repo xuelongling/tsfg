@@ -102,6 +102,7 @@ export fn tsfg_aot_str_trap_end(ctx: ?*const StringAotContext) u32 {
 
 export fn tsfg_aot_str_from_u16(ctx: ?*StringAotContext, ptr: [*]const u16, len: usize) u64 {
     const c = ctx orelse return 0;
+    if (c.trap_code != 0) return 0;
     const slice = if (len == 0) &[_]u16{} else ptr[0..len];
     const h = c.owner.heap.createString(slice, .persistent) catch {
         c.setTrap(3, 0, 0);

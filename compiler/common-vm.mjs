@@ -39,6 +39,25 @@ const u64ToI32 = (p) => Number(p & 0xffffffffn) | 0;
 const u64ToU32 = (p) => Number(p & 0xffffffffn) >>> 0;
 const mkI32 = (n) => ({ tag: TAG.i32, payload: i32ToU64(n) });
 const mkBool = (b) => ({ tag: TAG.bool, payload: b ? 1n : 0n });
+const f64Buf = new ArrayBuffer(8);
+const f64View = new DataView(f64Buf);
+const CANON_NAN_BITS = 0x7ff8000000000000n;
+const f64BitsToNum = (bits) => {
+  f64View.setBigUint64(0, BigInt.asUintN(64, bits), true);
+  return f64View.getFloat64(0, true);
+};
+const numToCanonicalF64Bits = (n) => {
+  if (Number.isNaN(n)) return CANON_NAN_BITS;
+  f64View.setFloat64(0, n, true);
+  return f64View.getBigUint64(0, true);
+};
+const mkF64 = (n) => ({ tag: TAG.f64, payload: numToCanonicalF64Bits(n) });
+const strictEqualVal = (l, r) => {
+  if (l.tag !== r.tag) return false;
+  if (l.tag === TAG.undefined || l.tag === TAG.null) return true;
+  if (l.tag === TAG.f64) return f64BitsToNum(l.payload) === f64BitsToNum(r.payload);
+  return l.payload === r.payload;
+};
 
 export class CommonCoreVm {
   constructor(mlirText) {
@@ -287,37 +306,56 @@ export class CommonCoreVm {
           } else if (n === 'tsfg_program.binary') {
             const l = getReg(op.operands[0]);
             const r = getReg(op.operands[1]);
-            const a = u64ToI32(l.payload);
-            const b = u64ToI32(r.payload);
             const oper = p.operator;
             let out;
-            if (oper === '+') out = mkI32((a + b) | 0);
-            else if (oper === '-') out = mkI32((a - b) | 0);
-            else if (oper === '*') out = mkI32(Math.imul(a, b));
-            else if (oper === '/') {
-              if (b === 0 || (a === -2147483648 && b === -1)) { this.setTrap(TRAP.div_zero, op.anchor); return { kind: 'trap' }; }
-              out = mkI32(Math.trunc(a / b));
-            } else if (oper === '%') {
-              if (b === 0) { this.setTrap(TRAP.div_zero, op.anchor); return { kind: 'trap' }; }
-              out = mkI32(a === -2147483648 && b === -1 ? 0 : (a % b) | 0);
-            } else if (oper === '<') out = mkBool(a < b);
-            else if (oper === '<=') out = mkBool(a <= b);
-            else if (oper === '>') out = mkBool(a > b);
-            else if (oper === '>=') out = mkBool(a >= b);
-            else if (oper === '===' || oper === '==') out = mkBool(l.tag === r.tag && l.payload === r.payload);
-            else if (oper === '!==' || oper === '!=') out = mkBool(l.tag !== r.tag || l.payload !== r.payload);
-            else if (oper === '&') out = mkI32(a & b);
-            else if (oper === '|') out = mkI32(a | b);
-            else if (oper === '^') out = mkI32(a ^ b);
-            else if (oper === '<<') out = mkI32(a << (b & 31));
-            else if (oper === '>>') out = mkI32(a >> (b & 31));
-            else if (oper === '>>>') out = mkI32(a >>> (b & 31));
-            else throw new Error(`Unsupported binary op: ${oper}`);
+            if (oper === '===' || oper === '==') {
+              out = mkBool(strictEqualVal(l, r));
+            } else if (oper === '!==' || oper === '!=') {
+              out = mkBool(!strictEqualVal(l, r));
+            } else if (l.tag === TAG.f64 || r.tag === TAG.f64) {
+              const fa = l.tag === TAG.f64 ? f64BitsToNum(l.payload) : u64ToI32(l.payload);
+              const fb = r.tag === TAG.f64 ? f64BitsToNum(r.payload) : u64ToI32(r.payload);
+              if (oper === '+') out = mkF64(fa + fb);
+              else if (oper === '-') out = mkF64(fa - fb);
+              else if (oper === '*') out = mkF64(fa * fb);
+              else if (oper === '/') out = mkF64(fa / fb);
+              else if (oper === '<') out = mkBool(fa < fb);
+              else if (oper === '<=') out = mkBool(fa <= fb);
+              else if (oper === '>') out = mkBool(fa > fb);
+              else if (oper === '>=') out = mkBool(fa >= fb);
+              else throw new Error(`Unsupported f64 binary op: ${oper}`);
+            } else {
+              const a = u64ToI32(l.payload);
+              const b = u64ToI32(r.payload);
+              if (oper === '+') out = mkI32((a + b) | 0);
+              else if (oper === '-') out = mkI32((a - b) | 0);
+              else if (oper === '*') out = mkI32(Math.imul(a, b));
+              else if (oper === '/') {
+                if (b === 0 || (a === -2147483648 && b === -1)) { this.setTrap(TRAP.div_zero, op.anchor); return { kind: 'trap' }; }
+                out = mkI32(Math.trunc(a / b));
+              } else if (oper === '%') {
+                if (b === 0) { this.setTrap(TRAP.div_zero, op.anchor); return { kind: 'trap' }; }
+                out = mkI32(a === -2147483648 && b === -1 ? 0 : (a % b) | 0);
+              } else if (oper === '<') out = mkBool(a < b);
+              else if (oper === '<=') out = mkBool(a <= b);
+              else if (oper === '>') out = mkBool(a > b);
+              else if (oper === '>=') out = mkBool(a >= b);
+              else if (oper === '&') out = mkI32(a & b);
+              else if (oper === '|') out = mkI32(a | b);
+              else if (oper === '^') out = mkI32(a ^ b);
+              else if (oper === '<<') out = mkI32(a << (b & 31));
+              else if (oper === '>>') out = mkI32(a >> (b & 31));
+              else if (oper === '>>>') out = mkI32(a >>> (b & 31));
+              else throw new Error(`Unsupported binary op: ${oper}`);
+            }
             setReg(out);
           } else if (n === 'tsfg_program.unary') {
             const v = getReg(op.operands[0]);
             const oper = p.operator;
-            if (oper === '-') setReg(mkI32((-u64ToI32(v.payload)) | 0));
+            if (oper === '-') {
+              if (v.tag === TAG.f64) setReg(mkF64(-f64BitsToNum(v.payload)));
+              else setReg(mkI32((-u64ToI32(v.payload)) | 0));
+            }
             else if (oper === '!') setReg(mkBool(v.payload === 0n));
             else if (oper === '~') setReg(mkI32(~u64ToI32(v.payload)));
             else if (oper === '+') setReg(v);
@@ -325,7 +363,7 @@ export class CommonCoreVm {
           } else if (n === 'tsfg_program.strict_equal') {
             const l = getReg(op.operands[0]);
             const r = getReg(op.operands[1]);
-            const eq = l.tag === r.tag && l.payload === r.payload;
+            const eq = strictEqualVal(l, r);
             setReg(mkBool(p.operator === '!==' ? !eq : eq));
           } else if (n === 'tsfg_program.value_copy') {
             const v = getReg(op.operands[0]);
@@ -385,6 +423,17 @@ export class CommonCoreVm {
             if (obj) obj.initialized = true;
             jumpTo(op.successors[0], [{ tag: TAG.ref, payload: frame ? frame.objId : 0n }]);
             break;
+          } else if (n === 'tsfg_program.receiver_get') {
+            const frame = frames.get(Number(getReg(op.operands[0]).payload));
+            if (!frame || frame.objId === 0n) { this.setTrap(TRAP.tdz_uninitialized, op.anchor); return { kind: 'trap' }; }
+            setReg({ tag: TAG.ref, payload: frame.objId });
+          } else if (n === 'tsfg_program.construct_value' || n === 'tsfg_program.allocate_reference') {
+            const obj = this.allocObject(p.type);
+            for (let fi = 0; fi < op.operands.length && fi < obj.fields.length; fi++) {
+              obj.fields[fi] = getReg(op.operands[fi]);
+            }
+            if (n === 'tsfg_program.construct_value') obj.initialized = true;
+            setReg({ tag: TAG.ref, payload: obj.id });
           } else if (n === 'tsfg_program.field_load') {
             const obj = this.getObject(getReg(op.operands[0]).payload);
             const fMeta = this.mod.fieldsById.get(p.field);
@@ -400,9 +449,14 @@ export class CommonCoreVm {
           } else if (n === 'tsfg_program.env_alloc') {
             const envMeta = this.mod.envsById.get(p.layout);
             const slots = Array.from({ length: Math.max(1, envMeta?.slotCount ?? 4) }, () => UNDEF);
-            const env = { id: BigInt(this.envs.length + 1), layout: p.layout, slots };
+            const parentId = op.operands.length > 0 ? getReg(op.operands[0]).payload : 0n;
+            const env = { id: BigInt(this.envs.length + 1), layout: p.layout, parentId, slots };
             this.envs.push(env);
             setReg({ tag: TAG.ref, payload: env.id });
+          } else if (n === 'tsfg_program.env_parent') {
+            const env = this.envs[Number(getReg(op.operands[0]).payload) - 1];
+            if (!env || env.parentId === 0n) { this.setTrap(TRAP.invalid_handle, op.anchor); return { kind: 'trap' }; }
+            setReg({ tag: TAG.ref, payload: env.parentId });
           } else if (n === 'tsfg_program.env_init' || n === 'tsfg_program.env_store') {
             const env = this.envs[Number(getReg(op.operands[0]).payload) - 1];
             const envMeta = this.mod.envsById.get(p.layout ?? env?.layout);
@@ -426,7 +480,7 @@ export class CommonCoreVm {
             const arr = { id: BigInt(this.arrays.length + 1), items, activeReaders: 0, activeWriter: false };
             this.arrays.push(arr);
             setReg({ tag: TAG.array, payload: arr.id });
-          } else if (n === 'tsfg_program.array_length') {
+          } else if (n === 'tsfg_program.array_length' || n === 'tsfg_program.readspan_length') {
             const recv = getReg(op.operands[0]);
             if (recv.tag === TAG.array) {
               const arr = this.arrays[Number(recv.payload) - 1];
@@ -438,6 +492,17 @@ export class CommonCoreVm {
               this.setTrap(TRAP.invalid_handle, op.anchor);
               return { kind: 'trap' };
             }
+          } else if (n === 'tsfg_program.array_resize') {
+            const recv = getReg(op.operands[0]);
+            const newLen = u64ToU32(getReg(op.operands[1]).payload);
+            const fill = op.operands.length > 2 ? getReg(op.operands[2]) : UNDEF;
+            if (recv.tag !== TAG.array) { this.setTrap(TRAP.invalid_handle, op.anchor); return { kind: 'trap' }; }
+            const arr = this.arrays[Number(recv.payload) - 1];
+            if (!arr) { this.setTrap(TRAP.invalid_handle, op.anchor); return { kind: 'trap' }; }
+            if (arr.activeReaders > 0 || arr.activeWriter) { this.setTrap(TRAP.borrow_conflict, op.anchor); return { kind: 'trap' }; }
+            if (newLen > arr.items.length && op.operands.length <= 2) { this.setTrap(TRAP.bounds, op.anchor); return { kind: 'trap' }; }
+            while (arr.items.length < newLen) arr.items.push(fill);
+            if (arr.items.length > newLen) arr.items.length = newLen;
           } else if (n === 'tsfg_program.readspan') {
             const arrVal = getReg(op.operands[0]);
             const start = u64ToU32(getReg(op.operands[1]).payload);
@@ -469,6 +534,8 @@ export class CommonCoreVm {
             const recv = getReg(op.operands[0]);
             const idx = u64ToU32(getReg(op.operands[1]).payload);
             const val = getReg(op.operands[2]);
+            if (recv.tag === TAG.span) { this.setTrap(TRAP.span_readonly, op.anchor); return { kind: 'trap' }; }
+            if (recv.tag !== TAG.array) { this.setTrap(TRAP.invalid_handle, op.anchor); return { kind: 'trap' }; }
             const arr = this.arrays[Number(recv.payload) - 1];
             if (!arr || idx >= arr.items.length) { this.setTrap(TRAP.bounds, op.anchor); return { kind: 'trap' }; }
             arr.items[idx] = val;
@@ -484,6 +551,9 @@ export class CommonCoreVm {
             setReg({ tag: TAG.ref, payload: cellKey });
           } else if (n === 'tsfg_program.return_throw') {
             return { kind: 'throw', value: getReg(op.operands[0]) };
+          } else if (n === 'tsfg_program.unreachable') {
+            this.setTrap(TRAP.invalid_handle, op.anchor);
+            return { kind: 'trap' };
           } else if (n === 'tsfg_program.invoke' || n === 'tsfg_program.invoke_method' || n === 'tsfg_program.invoke_indirect') {
             let callee = null;
             let callArgs = op.operands.map((r) => getReg(r));
