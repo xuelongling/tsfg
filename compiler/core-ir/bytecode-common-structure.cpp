@@ -86,7 +86,7 @@ bool readSourcePlan(ActualCheck &check,const Json &value,const commonProgram::Fu
       const auto *source=raw->getObject("source");uint64_t start,end;std::string path;
       if(!check.need(shape(source,{"path","start","end"}),"Common sourcePlan Source shape")||!text(*source->get("path"),path)||
           !check.need(unsignedField(source,"start",UINT32_MAX,start)&&unsignedField(source,"end",UINT32_MAX,end)&&start<=end,"Common sourcePlan Source range"))return false;
-      bool owned=false;for(const auto &entry:sources){const auto &original=*entry.getAsObject()->getString("path");
+      bool owned=false;for(const auto &entry:sources){const auto original=*entry.getAsObject()->getString("path");
         if(!check.step(1+(original.size()+path.size())/64))return false;
         if(original==path){owned=end<=uint64_t(*entry.getAsObject()->getInteger("length"));break;}}
       if(!check.need(owned,"Common sourcePlan original Source path/range"))return false;
@@ -186,7 +186,7 @@ bool CommonCold::graphStructure(){
         folded=source.back().name=="cf.cond_br";
       }
       for(size_t n=0;n<wire.blocks[b].instructions.size();++n){const auto &op=wire.blocks[b].instructions[n];
-        const auto &path=*(*tables.sources)[op.sourceIndex].getAsObject()->getString("path");++operationCount;
+        const auto path=*(*tables.sources)[op.sourceIndex].getAsObject()->getString("path");++operationCount;
         size_t lookups=1;for(auto count=sources->second.size();count;count>>=1){if(!check.step()){tables.remaining=model.remaining;return reject(failure.message);}lookups+=2;}
         if(!check.step(2*lookups+path.size()/32+1)){tables.remaining=model.remaining;return reject(failure.message);}
         const auto mapped=sources->second.find({uint16_t(b),uint16_t(n)});

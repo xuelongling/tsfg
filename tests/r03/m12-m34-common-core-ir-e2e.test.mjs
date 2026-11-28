@@ -8,10 +8,13 @@
 // Covers M12, M19, M20, M21, M25, M26, M29, M30, M31, M32, M34, M36 on real compiler IR.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { canonical } from '../../compiler/identity.mjs';
+import { commonSourceFormatV3 } from '../../compiler/common-program-common.mjs';
 import { readCommonProgramFacts } from '../../compiler/common-program-facts.mjs';
 import { projectCommonProgram } from '../../compiler/common-program-hir.mjs';
 import { createCommonProgramPublication } from '../../compiler/common-program-analysis.mjs';
@@ -19,6 +22,7 @@ import { emitCommonProgramCore } from '../../compiler/common-program-core.mjs';
 import { CommonCoreVm, TAG, TRAP } from '../../compiler/common-vm.mjs';
 import { lowerCommonCoreToLlvm } from '../../compiler/common-aot-llvm.mjs';
 
+const FRONTEND_EXE = process.env.TSFG_FRONTEND_EXE ?? 'E:\\tsfg-artifacts\\r03-baseline\\tsfg-frontend-m24-8443e0f.exe';
 const CORE_EXE = process.env.TSFG_CORE_IR_EXE ?? 'E:\\tsfg-build\\mlir-sdk\\bin\\tsfg-core-ir.exe';
 const ZIG_EXE = process.env.TSFG_LOCKED_ZIG ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\zig\\zig.exe';
 const CLANG_CL = process.env.TSFG_CLANG_CL ?? 'E:\\tsfg-cache\\win-cache\\closures\\sha256\\a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85\\windows-x86_64-msvc\\llvm\\bin\\clang-cl.exe';
@@ -367,4 +371,158 @@ int main(void) {
   assert.equal(unoptAot.om, unoptAot.inh, 'omitted() === inherited()');
   assert.equal(unoptAot.naTag, TAG.null, 'nullActual() returns null (not default mark(5))');
   assert.equal(unoptAot.th, 69, 'throwsAfterEffects() preserves mark(6), fail(9) and skips mark(5)');
+});
+
+function compileLiveRawTypeScriptToCoreMlir(rawTs, exportedRootNames) {
+  const sha = (s) => createHash('sha256').update(Buffer.from(s, 'utf8')).digest('hex');
+  const pos = JSON.parse(readFileSync(new URL('./common-program-positive.json', import.meta.url), 'utf8'));
+  const dts = pos.payload.files.find((f) => f.path.endsWith('.d.ts'));
+  const req = {
+    family: 'tsfg.program-facts-request-candidate',
+    version: commonSourceFormatV3.version,
+    schemaHash: commonSourceFormatV3.schemaHash,
+    input: {
+      sourceRoot: '/src',
+      rootFile: '/src/main.ts',
+      files: [
+        { path: '/src/main.ts', content: rawTs, sha256: sha(rawTs) },
+        { path: dts.path, content: dts.content, sha256: dts.sha256 },
+      ],
+      declarations: pos.payload.declarations,
+      config: pos.payload.config,
+      target: pos.payload.target,
+      compilationClosure: {
+        roots: [
+          ...exportedRootNames.map((name) => ({ kind: 'application', sourcePath: '/src/main.ts', name })),
+          { kind: 'module-initialization', sourcePath: '/src/main.ts', name: '$moduleInit' },
+        ],
+        requiredRoots: [],
+      },
+      hostImports: [],
+    },
+  };
+  const fe = spawnSync(FRONTEND_EXE, ['--program-facts-io-v3'], {
+    input: Buffer.from(canonical(req) + '\n', 'utf8'), windowsHide: true, maxBuffer: 32 * 1024 * 1024,
+  });
+  assert.equal(fe.status, 0, `live Go frontend --program-facts-io-v3 failed:\n${fe.stderr.toString('utf8')}`);
+  const facts = readCommonProgramFacts(fe.stdout);
+  const hir = projectCommonProgram(facts);
+  const pub = createCommonProgramPublication(hir);
+  const core = emitCommonProgramCore(hir, pub, { targets: [] });
+  const canon = spawnSync(CORE_EXE, ['--common-program', '--canonicalize'], {
+    input: Buffer.from(core, 'utf8'), windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+  });
+  assert.equal(canon.status, 0, `live TS --canonicalize failed:\n${canon.stderr.toString('utf8')}`);
+  const opt = spawnSync(CORE_EXE, ['--common-program', '--optimize'], {
+    input: Buffer.from(core, 'utf8'), windowsHide: true, maxBuffer: 64 * 1024 * 1024,
+  });
+  assert.equal(opt.status, 0, `live TS --optimize failed:\n${opt.stderr.toString('utf8')}`);
+  return { canonMlir: canon.stdout.toString('utf8'), optMlir: opt.stdout.toString('utf8') };
+}
+
+test('E2E Live Raw TypeScript -> Go Frontend -> Core IR -> 4-way VM === Windows x86-64 AOT (value, inheritance, closure, array, ReadSpan, try/catch/finally vs Q7 trap)', async () => {
+  const rawTs = `
+@tsfgValue
+class Vec2 { x: i32 = 0; y: i32 = 0; }
+
+class Counter {
+  n: i32 = 10;
+  step(delta: i32): i32 { this.n += delta; return this.n; }
+}
+class DoubleCounter extends Counter {
+  override step(delta: i32): i32 { this.n += delta * 2; return this.n; }
+}
+
+let acc: i32 = 5;
+
+function makeAdder(seed: i32): (k: i32) => i32 {
+  let cur: i32 = seed;
+  function add(k: i32): i32 { cur += k; return cur; }
+  return add;
+}
+
+export function getAcc(): i32 { return acc; }
+
+export function runAll(v: Vec2, idx: u32): i32 {
+  const c: Counter = new DoubleCounter();
+  const s1: i32 = c.step(v.x + v.y);
+  const f: (k: i32) => i32 = makeAdder(s1);
+  const s2: i32 = f(4) + f(6);
+  const arr: i32[] = [100, 200, 300];
+  const sp: ReadSpan<i32> = readSpan(arr, 0, 3);
+  let picked: i32 = 0;
+  try {
+    throw sp[idx];
+  } catch (e) {
+    picked = e as i32;
+  } finally {
+    acc += 1;
+  }
+  return s2 + picked + acc;
+}
+
+export function valueIsolation(v: Vec2): i32 {
+  const copy: Vec2 = v;
+  copy.x = 999;
+  return v.x * 1000 + copy.x;
+}
+`;
+  const { canonMlir, optMlir } = compileLiveRawTypeScriptToCoreMlir(rawTs, ['getAcc', 'runAll', 'valueIsolation']);
+
+  const runVm = (mlir) => {
+    const vm = new CommonCoreVm(mlir);
+    const v = vm.createValueObject('Vec2', { x: 3, y: 2 });
+    const ok1 = vm.callExport('runAll', [v, 1]);
+    const accAfterOk = vm.callExport('getAcc', []);
+    const trapped = vm.callExport('runAll', [v, 5]); // OOB ReadSpan trap -> MUST bypass catch & finally!
+    const accAfterTrap = vm.callExport('getAcc', []); // MUST stay 6 (finally skipped on trap!)
+    const iso = vm.callExport('valueIsolation', [v]); // copy.x=999 must NOT mutate v.x (3) -> 3999!
+    return {
+      ok1: ok1.i32,
+      accAfterOk: accAfterOk.i32,
+      trapCode: trapped.trap,
+      accAfterTrap: accAfterTrap.i32,
+      iso: iso.i32,
+    };
+  };
+
+  const buildDriver = ({ exports, mod }) => {
+    const vecId = [...mod.classesById.entries()].find(([, c]) => c.name === 'Vec2')[0];
+    const vecNum = mod.classNumId.get(vecId);
+    return `${C_COMMON_EXTERNS}
+extern void ${exports.runAll.sym}(void *, uint16_t *, uint64_t *, uint16_t, uint64_t, uint16_t, uint64_t);
+extern void ${exports.getAcc.sym}(void *, uint16_t *, uint64_t *);
+extern void ${exports.valueIsolation.sym}(void *, uint16_t *, uint64_t *, uint16_t, uint64_t);
+int main(void) {
+  void *e = tsfg_eng_create();
+  aot_cmn_bootstrap(e);
+  uint64_t v = tsfg_eng_alloc_obj(e, ${vecNum});
+  tsfg_eng_obj_set_field(e, v, 0, 3, 3, 1);
+  tsfg_eng_obj_set_field(e, v, 1, 3, 2, 1);
+  tsfg_eng_mark_init(e, v);
+  uint16_t t; uint64_t ok1, acc1, dummy, acc2, iso;
+  ${exports.runAll.sym}(e, &t, &ok1, 5, v, 3, 1);
+  (void)tsfg_eng_gc(e);
+  ${exports.getAcc.sym}(e, &t, &acc1);
+  ${exports.runAll.sym}(e, &t, &dummy, 5, v, 3, 5);
+  uint32_t trapCode = tsfg_eng_trap(e);
+  tsfg_eng_reset(e, 100000, 64);
+  ${exports.getAcc.sym}(e, &t, &acc2);
+  ${exports.valueIsolation.sym}(e, &t, &iso, 5, v);
+  printf("{\\"ok1\\":%d,\\"accAfterOk\\":%d,\\"trapCode\\":%u,\\"accAfterTrap\\":%d,\\"iso\\":%d}\\n",
+         (int32_t)ok1, (int32_t)acc1, trapCode, (int32_t)acc2, (int32_t)iso);
+  tsfg_eng_destroy(e);
+  return 0;
+}`;
+  };
+
+  // Independent oracle:
+  // s1 = 10 + (3+2)*2 = 20; s2 = 24 + 30 = 54; picked = 200; finally acc = 5+1 = 6 -> 54+200+6 = 260
+  // idx=5 -> trap bounds(4), finally skipped -> acc stays 6
+  // valueIsolation: v.x stays 3, copy.x = 999 -> 3*1000 + 999 = 3999
+  const expected = { ok1: 260, accAfterOk: 6, trapCode: TRAP.bounds, accAfterTrap: 6, iso: 3999 };
+  assert.deepEqual(runVm(canonMlir), expected);
+  assert.deepEqual(runVm(optMlir), expected);
+  assert.deepEqual(await compileAndRunCommonAot('live-ts-unopt', canonMlir, buildDriver), expected);
+  assert.deepEqual(await compileAndRunCommonAot('live-ts-opt', optMlir, buildDriver), expected);
 });
